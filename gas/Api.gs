@@ -8,12 +8,17 @@ var NEW_CARD_SHARE = 0.25;  // 1 セッションのうち新規カードに確�
 
 /** UI が使う選択肢や既定値をまとめて返す */
 function api_getMeta() {
+  // シートURLの取得に失敗しても画面は開けるようにする
+  var ssUrl = '';
+  try { ssUrl = getSpreadsheet_().getUrl(); } catch (e) { ssUrl = ''; }
   return {
     types: TYPES,
     posByType: POS_BY_TYPE,
     statusLabels: STATUS_LABELS,
     settings: readSettings(),
-    today: todayStr_()
+    today: todayStr_(),
+    version: APP_VERSION,
+    spreadsheetUrl: ssUrl
   };
 }
 

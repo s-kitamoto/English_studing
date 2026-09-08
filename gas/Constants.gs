@@ -4,6 +4,9 @@
  * （途中に挿入すると既存シートとずれる）。
  */
 
+/** 設定画面に表示するアプリのバージョン。デプロイが反映されたかの目印も兼ねる */
+var APP_VERSION = '0.1.1';
+
 var SHEET = {
   ITEMS: 'Items',
   REVIEWS: 'Reviews',

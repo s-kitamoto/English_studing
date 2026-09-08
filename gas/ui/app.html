@@ -655,6 +655,10 @@ call('api_getMeta').then(function (m) {
   fillTypeSelect();
   syncPosOptions();
   fillSettings(m.settings);
+  $('app-version').textContent = m.version || '–';
+  var link = $('ss-link');
+  if (m.spreadsheetUrl) { link.href = m.spreadsheetUrl; }
+  else { link.removeAttribute('href'); link.textContent = '（取得できませんでした）'; }
   loadDashboard();
   if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
 }).catch(function (e) {

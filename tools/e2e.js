@@ -272,6 +272,12 @@ function buildHtml() {
     await page.waitForFunction(() => document.getElementById('toast').textContent === '保存しました', null, { timeout: 5000 });
     expect(sandbox.readSettings().session_size, 12, 'サーバー側に反映');
   });
+  await check('アプリ情報が出る', async () => {
+    const v = await text('#app-version');
+    if (!/^\d+\.\d+\.\d+$/.test(v)) throw new Error('バージョンが出ていない: ' + v);
+    const href = await page.getAttribute('#ss-link', 'href');
+    if (!href || href === '#') throw new Error('シートへのリンクが張られていない: ' + href);
+  });
   await shot('08-settings');
 
   console.log('\n[ダークモード]');

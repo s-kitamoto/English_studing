@@ -209,6 +209,9 @@ eq(meta.types.map(t => t.value), ['word', 'phrase', 'sentence'], 'type は3値')
 eq(meta.posByType.sentence, [], 'sentence の pos は空');
 eq(meta.posByType.word.length, 8, 'word の pos は8種');
 eq(meta.posByType.phrase.length, 5, 'phrase の pos は5種');
+eq(meta.version, S.APP_VERSION, 'バージョンを返す');
+ok(/^\d+\.\d+\.\d+$/.test(meta.version), 'バージョンは x.y.z 形式');
+eq(meta.spreadsheetUrl, 'https://example.invalid/ss', 'スプレッドシートURLを返す');
 
 group('interleave_ / streak / heatmap の単体');
 eq(S.interleave_([1,2,3,4,5,6], []).length, 6, 'extra 空');
