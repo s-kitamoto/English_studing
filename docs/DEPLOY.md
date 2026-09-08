@@ -62,7 +62,8 @@ ls -l ~/.clasprc.json   # 作られていることを確認
 
 #### `CLASPRC_JSON_B64` — 認証情報
 
-`~/.clasprc.json` を base64 にしたもの。
+`~/.clasprc.json` を base64 にしたもの。手順 4 で `gh` CLI を使うならこの手順は不要
+（パイプで直接渡せる）。ブラウザで登録する場合だけクリップボードに載せる。
 
 ```bash
 # macOS
@@ -101,13 +102,36 @@ npx @google/clasp@3 list-deployments
 
 ### 4. GitHub に Secrets を登録する
 
-リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で 3 件登録する。
+登録するのは次の 3 件。
 
 | Name | 値 | 必須 |
 |---|---|---|
-| `CLASPRC_JSON_B64` | 手順 3 の base64 文字列 | 必須 |
+| `CLASPRC_JSON_B64` | `~/.clasprc.json` の base64 | 必須 |
 | `GAS_SCRIPT_ID` | スクリプト ID | 必須 |
 | `GAS_DEPLOYMENT_ID` | デプロイ ID | 任意（未設定ならエディタ上のコードのみ更新し、`/exec` は据え置き） |
+
+#### gh CLI で登録する（推奨）
+
+トークンが画面にもシェル履歴にも残らない。
+
+```bash
+brew install gh     # 未導入なら
+gh auth login       # 未認証なら
+
+# パイプで直接渡す。値は表示されない
+base64 -i ~/.clasprc.json | tr -d '\n' \
+  | gh secret set CLASPRC_JSON_B64 --repo ＜owner＞/＜repo＞
+
+# 残りは隠し入力のプロンプトで貼り付ける
+gh secret set GAS_SCRIPT_ID --repo ＜owner＞/＜repo＞
+gh secret set GAS_DEPLOYMENT_ID --repo ＜owner＞/＜repo＞
+
+gh secret list --repo ＜owner＞/＜repo＞   # 確認
+```
+
+#### ブラウザで登録する
+
+リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で 3 件登録する。
 
 ### 5. 動かして確認する
 
