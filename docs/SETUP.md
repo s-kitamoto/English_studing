@@ -21,15 +21,18 @@ WebApp だけで動く状態にするまでの手順。所要 15〜20 分。
 ### clasp を使う場合（推奨）
 
 ```bash
-npm install -g @google/clasp
-clasp login
+npx @google/clasp@3 login
 
 cp clasp.json.example gas/.clasp.json
 # gas/.clasp.json の scriptId に、プロジェクト設定に表示されている
 # 「スクリプト ID」を貼り付ける
 
-cd gas && clasp push
+cd gas && npx @google/clasp@3 push
 ```
+
+> `npm install -g @google/clasp@3` でグローバルに入れてもよいが、その場合は
+> グローバルの bin（`$(npm prefix -g)/bin`）が PATH に入っている必要がある。
+> 入っていないと `clasp: command not found` になる。
 
 ### 手でコピーする場合
 

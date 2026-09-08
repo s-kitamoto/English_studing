@@ -43,12 +43,20 @@ Workspace の管理者が無効化している場合は、この方式自体が�
 自分の PC で実行する（GitHub Actions 側ではブラウザ認証ができないため、ここだけは手作業）。
 
 ```bash
-npm install -g @google/clasp@3
-clasp login
+npx @google/clasp@3 login
 ```
 
-ブラウザが開くので、**アプリを動かすアカウント**（`s-kitamoto@unext-hd.jp`）でログインして承認する。
+ブラウザが開くので、**アプリを動かすアカウント**でログインして承認する。
 成功すると `~/.clasprc.json` が作られる。
+
+```bash
+ls -l ~/.clasprc.json   # 作られていることを確認
+```
+
+> `npm install -g` でも構わないが、グローバルの bin が PATH に入っていないと
+> `clasp: command not found` になる（nvm 利用時は Node のバージョンを切り替えると消える）。
+> `.clasprc.json` を一度作るだけが目的で、CI 側は自前で clasp を入れるため、
+> `npx` で済ませるのが確実。
 
 ### 3. 登録する 3 つの値を用意する
 
@@ -80,7 +88,7 @@ Apps Script エディタ → 右上の **「デプロイ」→「デプロイを
 ```bash
 cd gas
 echo '{"scriptId":"＜スクリプトID＞","rootDir":"."}' > .clasp.json
-clasp list-deployments
+npx @google/clasp@3 list-deployments
 ```
 
 ```
@@ -129,10 +137,11 @@ Apps Script プロジェクトと Drive への長期アクセス権を持つ。
 | 症状 | 原因と対処 |
 |---|---|
 | `User has not enabled the Apps Script API` | 手順 1 が未実施。有効化してから数分待って再実行 |
-| `invalid_grant` / `Token has been expired or revoked` | リフレッシュトークンが失効した。ローカルで `clasp login` をやり直し、`CLASPRC_JSON_B64` を更新する |
+| `invalid_grant` / `Token has been expired or revoked` | リフレッシュトークンが失効した。ローカルで `npx @google/clasp@3 login` をやり直し、`CLASPRC_JSON_B64` を更新する |
 | `Secrets ... を設定してください` で失敗 | `CLASPRC_JSON_B64` か `GAS_SCRIPT_ID` が未登録 |
 | push は成功するが `/exec` が古いまま | `GAS_DEPLOYMENT_ID` が未設定か、`@HEAD` の方の ID を登録している |
 | ウェブアプリの URL が変わってしまった | ID 指定なしの `clasp deploy` を手で実行した可能性。古いデプロイの ID を `GAS_DEPLOYMENT_ID` に登録し直すか、新しい URL でブックマークを更新する |
+| `clasp: command not found` | グローバル install の bin が PATH にない。`npx @google/clasp@3 <command>` で実行するか、`$(npm prefix -g)/bin` を PATH に追加する |
 | `clasp login` 自体が失敗する | Workspace の管理者が third-party の OAuth アプリを制限している可能性。管理者に確認が必要 |
 
 ## ワークフローを止めたいとき
