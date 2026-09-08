@@ -14,4 +14,4 @@ Google Apps Script + スプレッドシートで作る、英単語・フレー�
 
 ## ステータス
 
-要件定義 v0.3 確定。Phase 1（シート初期化 + WebApp + SM-2）着手可。
+要件定義 v0.4 確定。Phase 1（シート初期化 + WebApp + SM-2）着手可。

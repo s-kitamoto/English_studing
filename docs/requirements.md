@@ -1,4 +1,4 @@
-# 英単語・フレーズ学習アプリ 要件定義（v0.3）
+# 英単語・フレーズ学習アプリ 要件定義（v0.4）
 
 更新日: 2026-09-08 / ステータス: Phase 1 着手可
 
@@ -14,7 +14,7 @@
 | 意味・使い方の入力 | **手入力が前提**。自動取得は「下書きを埋める任意の補助」として Phase 2 に置く（`LanguageApp.translate()` + Free Dictionary API）。Gemini 版は Phase 3 |
 | 実行アカウント | **Google Workspace (unext-hd.jp)**。Web App の「全員」公開は可能と確認済み |
 | リマインドメール | **スコープ外**（不要との判断） |
-| タグ | 初期セット14個を §4.8 で定義。拡張からの登録時に `source_url` のドメインで自動付与 |
+| 分類軸 | **`type`（単語/フレーズ/センテンス）と `pos`（品詞）の2つのみ**。独立したタグの概念は持たない（§4.8） |
 | UI言語 | 日本語 |
 
 ---
@@ -96,17 +96,16 @@ Workspace アカウントのため組織ポリシーの影響を受ける項目�
 | 列 | 型 | 説明 |
 |---|---|---|
 | `id` | string | `Utilities.getUuid()`。**行番号はIDにしない**（削除で狂うため） |
-| `type` | enum | `word` / `phrase` / `idiom` / `sentence`。自動判定＋手動上書き可 |
+| `type` | enum | `word` / `phrase` / `sentence`。自動判定＋手動上書き可（§4.8） |
 | `text` | string | 英語表現そのもの |
 | `lemma` | string | 重複判定・検索用の正規化キー（小文字化・前後空白除去・連続空白の圧縮・末尾句読点除去） |
 | `phonetic` | string | 発音記号（例: `/əˈkɒmədeɪt/`） |
-| `pos` | string | 品詞（複数可、カンマ区切り） |
+| `pos` | enum | 品詞・機能。**単一選択**。`type` によって選択肢が変わる（§4.8） |
 | `meaning_ja` | string | 日本語の意味（主） |
 | `meaning_en` | string | 英英定義 |
 | `usage_note` | string | 使い方・ニュアンス・類義語との違い・共起語 |
 | `example` | string | 例文（英） |
 | `example_ja` | string | 例文の訳 |
-| `tags` | string | カンマ区切り |
 | `source_url` | string | 登録元URL |
 | `source_context` | string | 選択箇所を含む前後の原文（最大300文字・最大3件を `\n---\n` 区切りで保持） |
 | `encounter_count` | number | 同一表現への再遭遇回数（重複登録時に加算＝重要度シグナル） |
@@ -135,10 +134,9 @@ Workspace アカウントのため組織ポリシーの影響を受ける項目�
 ### 4.4 type 自動判定
 
 ```
-空白なし                              → word
-2〜4語 かつ 文末に . ? ! がない       → phrase
-　うち「動詞+前置詞/副詞」の形        → idiom（候補として提示、確定は手動）
-5語以上 または 文末に . ? ! がある    → sentence
+空白なし                            → word
+文末に . ? ! がある または 5語以上  → sentence
+それ以外                            → phrase
 ```
 UI 上で常に手動変更可能。
 
@@ -157,46 +155,31 @@ UI 上で常に手動変更可能。
 
 拡張の `doPost` と WebApp の書き込みが競合しうるため、全書き込み処理を **`LockService.getScriptLock()`（待機30秒）で直列化**する。
 
-### 4.8 `Tags` シートと初期タグセット
+### 4.8 `type` と `pos` の値（分類はこの2軸のみ）
 
-タグは Settings（key-value）ではなく専用シートで管理する。自動付与ルールを持たせるため。
+**独立した「タグ」の概念は持たない。** 分類軸は `type`（語のかたまりの大きさ）と `pos`（品詞・機能）の2つだけとし、`Tags` シートも `tags` 列も設けない。絞り込み・検索はこの2軸＋全文検索で行う。
 
-**列**: `tag` / `label_ja` / `category` / `sort_order` / `auto_domains`（自動付与に使うドメインを空白区切り）/ `active`
+#### `type` — 3値
 
-タグ設計の失敗要因は「種類が多すぎて付けなくなる」ことなので、**初期は14個・3カテゴリに絞る**。運用しながら追加する前提。
-
-#### 場面（scene）— どこで出会ったか。原則1つ
-
-| tag | label_ja | auto_domains |
+| 値 | 表示 | 定義 |
 |---|---|---|
-| `meeting` | 会議 | `meet.google.com` `zoom.us` `teams.microsoft.com` |
-| `email` | メール・チャット | `mail.google.com` `chat.google.com` `slack.com` |
-| `doc` | 資料・仕様書・契約 | `docs.google.com` `drive.google.com` `notion.so` `atlassian.net` |
-| `news` | 記事・ニュース・ブログ | `techcrunch.com` `bloomberg.com` `reuters.com` `nytimes.com` `ft.com` `wsj.com` `medium.com` |
-| `talk` | 動画・ポッドキャスト・登壇 | `youtube.com` `podcasts.google.com` |
+| `word` | 単語 | 1語 |
+| `phrase` | フレーズ | 複数語のかたまり（句動詞・慣用句・コロケーションを含む） |
+| `sentence` | センテンス | 文 |
 
-#### 領域（domain）— トピック。複数可
+v0.3 まであった `idiom` は **`phrase` に統合**した。慣用句かどうかは `pos` の「慣用表現」で表せるため、type を分ける必要がない。
 
-| tag | label_ja | auto_domains |
-|---|---|---|
-| `ai` | AI・機械学習 | `arxiv.org` `openai.com` `anthropic.com` `huggingface.co` `deepmind.google` |
-| `tech` | 技術・開発 | `github.com` `stackoverflow.com` `developer.mozilla.org` `cloud.google.com` `aws.amazon.com` |
-| `biz` | ビジネス一般 | — |
-| `finance` | 財務・数字 | — |
-| `legal` | 法務・契約 | — |
+#### `pos` — 単一選択。`type` によって選択肢を出し分ける
 
-#### 性質（form）— 言語的な種類。任意
+| `type` | 選択肢 |
+|---|---|
+| `word` | 名詞 / 動詞 / 形容詞 / 副詞 / 前置詞 / 接続詞 / 代名詞 / 間投詞 |
+| `phrase` | 句動詞 / 慣用表現 / コロケーション / 名詞句 / 動詞句 |
+| `sentence` | （`pos` は使わない・非表示） |
 
-| tag | label_ja | 用途 |
-|---|---|---|
-| `phrasal` | 句動詞 | `look into` `roll out` など。type=`idiom` の補助 |
-| `collocation` | コロケーション | `make a decision` `meet a deadline` など |
-| `formal` | フォーマル | 文書・対外向けで使う表現 |
-| `casual` | 口語・スラング | 会議の雑談で拾った表現 |
+**単一選択とする理由**: `run` のように名詞にも動詞にもなる語はあるが、学習カードとしては「今回出会った用法」1つを記録すべきで、両方必要なら別カードに分ける方が学習単位として正しいため。
 
-#### 自動タグ付け
-拡張から登録する際、`source_url` のホスト名を `auto_domains` と照合して**該当タグを自動付与**する（サブドメインは後方一致）。該当なしなら無タグ。手動で追加・削除できる。
-自社の Workspace ドメイン（`*.unext-hd.jp`）からの登録には `doc` を既定で付ける。
+内部値は英語（`noun` / `verb` / `phrasal_verb` など）で保存し、UI では日本語を表示する。Free Dictionary API が返す `partOfSpeech`（`noun` / `verb` / `adjective` …）はそのままマッピングできる。
 
 
 ## 5. 復習アルゴリズム（SM-2 / 確定）
@@ -267,9 +250,9 @@ function schedule(item, grade, today) {
 | モード | 内容 | 主な対象 type | Phase |
 |---|---|---|---|
 | **フラッシュカード** | 表(英)→裏(意味・例文・使い方)。自己採点4段階 | すべて | 1 |
-| **4択** | 誤答選択肢を**同タグ・同品詞の既存アイテムから自動生成**（不足時は同 type からランダム） | word / phrase | 3 |
+| **4択** | 誤答選択肢を**同 `type`・同 `pos` の既存アイテムから自動生成**（不足時は同 `type` からランダム） | word / phrase | 3 |
 | **タイピング** | 日本語→英語を打つ。綴り想起は記憶効果が最も強い | word / phrase | 3 |
-| **穴埋め (Cloze)** | 例文中のターゲットを空欄にして補充 | phrase / idiom / sentence | 3 |
+| **穴埋め (Cloze)** | 例文中のターゲットを空欄にして補充 | phrase / sentence | 3 |
 | **並べ替え** | 単語チップをドラッグして文を組み立てる | sentence | 3 |
 | **リスニング** | `speechSynthesis` で読み上げ → 綴り or 意味を答える | すべて | 3 |
 
@@ -289,7 +272,7 @@ function schedule(item, grade, today) {
 - `commands`: 既定 `Alt+S` で選択テキストを即登録
 - content script: **選択範囲を含む1文＋前後各1文（最大300文字）**を抽出して `source_context` に載せる
 - popup: 手動入力フォーム＋「意味を取得」＋直近5件の登録履歴
-- options: Web App URL / トークン / 既定タグの設定
+- options: Web App URL / トークンの設定
 - 登録結果をトースト表示（成功 / 重複マージ / 失敗）
 - 補助: 右クリックから Weblio / Cambridge を別タブで開くメニュー（辞書サイトは `X-Frame-Options` で iframe 表示できないため）
 
@@ -393,7 +376,7 @@ type が `word` のときのみ Dictionary API を呼び、`phrase` / `sentence`
 
 業務中のページから登録するため、`source_context` に社内情報や取引先名が混入しうる。以下を**設計上の制約として固定**する。
 
-1. **Enricher が Google 外部に送信してよいのは `text`（英語表現そのもの）のみ**。`source_context` / `source_url` / `tags` は送信しない
+1. **Enricher が Google 外部に送信してよいのは `text`（英語表現そのもの）のみ**。`source_context` / `source_url` は送信しない
 2. `LanguageApp.translate()` は Google Workspace 内のサービス。Free Dictionary API は**完全な第三者サービス**であることを認識して使う
 3. Gemini 版でも同じ制約を適用する。文脈を渡せば訳の精度は上がるが**既定はオフ**。設定で明示的にオプトインした場合のみ送信し、その際は UI に注意表示を出す
 4. 社外秘ページからの登録時は、拡張のトーストに「文脈を保存しました。外部送信はされません」と明示する
@@ -410,7 +393,7 @@ type が `word` のときのみ Dictionary API を呼び、`phrase` / `sentence`
 | `api_getDashboard()` | — | `{dueCount, newCount, streak, heatmap[], totalCount, unenrichedCount}` |
 | `api_getReviewSession(opts)` | `{limit, modes}` | `{cards: [...出題に必要な列のみ]}` |
 | `api_submitReviews(payload)` | `{results: [{item_id, grade, mode, elapsed_ms}]}` | `{ok, updated}` |
-| `api_listItems(q)` | `{query, type, status, tags, offset, limit}` | `{items: [...軽量列], total}` |
+| `api_listItems(q)` | `{query, type, pos, status, offset, limit}` | `{items: [...軽量列], total}` |
 | `api_getItem(id)` | `id` | `{item}` |
 | `api_upsertItem(payload)` | item | `{item, merged}` |
 | `api_deleteItem(id)` | `id` | `{ok}` |
@@ -418,14 +401,14 @@ type が `word` のときのみ Dictionary API を呼び、`phrase` / `sentence`
 | `api_getSettings()` / `api_saveSettings(obj)` | — | `{settings}` |
 | `api_exportCsv(opts)` | `{format: 'csv'\|'anki'}` | `{fileUrl}` |
 
-一覧の軽量列 = `id, text, meaning_ja, type, tags, status, due_date, encounter_count`。
+一覧の軽量列 = `id, text, meaning_ja, type, pos, status, due_date, encounter_count`。
 3,000件までは初回に全件返してクライアント側で検索・絞り込み（往復レイテンシ回避）。超えたらページングに切替。
 
 ### 10.2 拡張から（HTTP）
 
 ```
 POST {WEBAPP_URL}
-  { token, action: 'add',    text, url, context, tags? }  → { ok, id, merged, item }
+  { token, action: 'add',    text, url, context }         → { ok, id, merged, item }
   { token, action: 'enrich', text, type }                  → { ok, data }
 GET  {WEBAPP_URL}?token=...&action=recent&limit=5          → { ok, items }
 ```
@@ -445,8 +428,8 @@ GET  {WEBAPP_URL}?token=...&action=recent&limit=5          → { ok, items }
 | 画面 | 内容 |
 |---|---|
 | **ホーム** | 今日の復習件数 / 新規件数 / 連続学習日数(streak) / 直近8週のヒートマップ / 総登録数 / 未整備件数 / 「復習を始める」CTA |
-| **登録 (Add)** | 英語表現を入力 →「意味を取得」→ 自動補完 → 編集して保存。type / タグ / 例文 / 出典を編集可 |
-| **一覧 (Library)** | 全文検索、type・status・タグ絞り込み、並び替え（登録日 / 次回復習日 / 遭遇回数）、インライン編集、論理削除、CSVエクスポート |
+| **登録 (Add)** | 英語表現を入力 → 意味・使い方を手入力 → 保存。`type` は自動判定し手動上書き可、`pos` は `type` に応じたプルダウン |
+| **一覧 (Library)** | 全文検索、`type`・`pos`・`status` で絞り込み、並び替え（登録日 / 次回復習日 / 遭遇回数）、インライン編集、論理削除、CSVエクスポート |
 | **復習 (Review)** | 進捗バー、カード、4段階評価ボタン、発音ボタン、その場で編集、終了サマリ（正答率・所要時間・次回予定） |
 | **未整備キュー** | `meaning_ja` が空のアイテムを1件ずつ埋める専用UI。`source_context` / `source_url` を並記。**手入力が前提のため中核画面**。未整備のアイテムは復習に出さない |
 | **ゴミ箱** | 論理削除済みの復元 / 完全削除 |
@@ -495,8 +478,8 @@ GAS 側は **clasp** でローカル管理し、Git で履歴を残す。
 
 | Phase | 内容 | 前提確認 |
 |---|---|---|
-| **1 (MVP)** | シート初期化（Items / Reviews / Settings / Tags）/ GAS WebApp（ホーム・登録[手入力]・一覧・未整備キュー・復習[フラッシュカード]・設定）/ SM-2 / 発音（`speechSynthesis`）/ タグ | **なし。着手可** |
-| **2** | Chrome拡張（右クリック・`Alt+S`・popup・options・ドメイン自動タグ）/ 共有トークン認証 / Enricher 補助ボタン（`translate` + `dict`） | §3 の #2（外部UrlFetch）と #3（拡張インストール） |
+| **1 (MVP)** | シート初期化（Items / Reviews / Settings）/ GAS WebApp（ホーム・登録[手入力]・一覧・未整備キュー・復習[フラッシュカード]・設定）/ SM-2 / 発音（`speechSynthesis`） | **なし。着手可** |
+| **2** | Chrome拡張（右クリック・`Alt+S`・popup・options）/ 共有トークン認証 / Enricher 補助ボタン（`translate` + `dict`） | §3 の #2（外部UrlFetch）と #3（拡張インストール） |
 | **3** | Gemini 版 Enricher / 出題モード追加（4択・タイピング・Cloze・並べ替え・リスニング）/ 統計ダッシュボード | Gemini APIキー |
 | **4** | CSV・Anki エクスポート / 日次バックアップ / ゴミ箱の完全削除 | なし |
 
@@ -512,6 +495,7 @@ GAS 側は **clasp** でローカル管理し、Git で履歴を残す。
 
 ## 変更履歴
 
+- **v0.4** (2026-09-08) — 分類軸を `type` と `pos` の2つに単純化。独立したタグの概念（`Tags` シート・`tags` 列・ドメイン自動タグ付け）を全廃。`type` から `idiom` を外して `phrase` に統合し3値に。`pos` は単一選択とし `type` によって選択肢を出し分ける
 - **v0.3** (2026-09-08) — Web App の「全員」公開が可能と確認され §3-1 をクリア。意味・使い方は手入力を前提とし、自動取得を任意の補助（Phase 2）へ格下げ。`Tags` シートと初期タグセット14個・ドメイン自動タグ付けを新設。共有トークンの目的と限界を明文化。リマインドメールをスコープから削除
 - **v0.2** (2026-09-08) — SM-2 / 共有トークン / 新規20件を確定。Workspace 前提の事前確認事項とデータ保護方針を新設。MV3 の CORS に関する v0.1 の記述を訂正
 - **v0.1** (2026-09-08) — 初版
