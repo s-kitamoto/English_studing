@@ -30,6 +30,11 @@ git push (gas/** が変更)
 
 ## 手順
 
+> **最初のデプロイだけは手で作る必要がある。**
+> CI がやるのは「既存デプロイを新バージョンに差し替える」ことだけで、
+> これは URL を変えないための仕様。デプロイが 1 つも無い状態では
+> `GAS_DEPLOYMENT_ID` も存在しないので、下の順番どおりに進める。
+
 ### 1. Apps Script API を有効にする
 
 [script.google.com/home/usersettings](https://script.google.com/home/usersettings) で
@@ -44,47 +49,82 @@ Workspace の管理者が無効化している場合は、この方式自体が�
 
 ```bash
 npx @google/clasp@3 login
+ls -l ~/.clasprc.json   # 作られていることを確認
 ```
 
 ブラウザが開くので、**アプリを動かすアカウント**でログインして承認する。
-成功すると `~/.clasprc.json` が作られる。
-
-```bash
-ls -l ~/.clasprc.json   # 作られていることを確認
-```
 
 > `npm install -g` でも構わないが、グローバルの bin が PATH に入っていないと
 > `clasp: command not found` になる（nvm 利用時は Node のバージョンを切り替えると消える）。
 > `.clasprc.json` を一度作るだけが目的で、CI 側は自前で clasp を入れるため、
 > `npx` で済ませるのが確実。
 
-### 3. 登録する 3 つの値を用意する
+### 3. Secrets を 2 件だけ登録する
 
-#### `CLASPRC_JSON_B64` — 認証情報
+この時点ではまだデプロイが無いので、`GAS_DEPLOYMENT_ID` は後回しにする。
 
-`~/.clasprc.json` を base64 にしたもの。手順 4 で `gh` CLI を使うならこの手順は不要
-（パイプで直接渡せる）。ブラウザで登録する場合だけクリップボードに載せる。
+| Name | 値 |
+|---|---|
+| `CLASPRC_JSON_B64` | `~/.clasprc.json` を base64 にしたもの |
+| `GAS_SCRIPT_ID` | Apps Script エディタ → ⚙ プロジェクトの設定 → **スクリプト ID** |
+
+#### ブラウザで登録する
 
 ```bash
-# macOS
+# macOS。クリップボードに base64 を載せる
 base64 -i ~/.clasprc.json | tr -d '\n' | pbcopy
-
-# Linux
-base64 -w0 ~/.clasprc.json | xclip -selection clipboard
 ```
 
-> base64 にするのは、複数行 JSON がログに部分的に露出するのを避けるため。
+リポジトリの **Settings → Secrets and variables → Actions → New repository secret**
+で 2 件登録する。base64 にするのは、複数行 JSON がログに部分露出するのを避けるため。
 
-#### `GAS_SCRIPT_ID` — スクリプト ID
+#### gh CLI で登録する
 
-Apps Script エディタ → 左メニューの ⚙（プロジェクトの設定）→ **「スクリプト ID」**。
+トークンが画面にもシェル履歴にも残らない。`gh` が入っていない環境で、これだけのために
+Homebrew を入れる必要はない（入れたい場合は [cli/cli の Releases](https://github.com/cli/cli/releases) の `.pkg`）。
 
-#### `GAS_DEPLOYMENT_ID` — デプロイ ID
+```bash
+gh auth login       # 未認証なら
 
-Apps Script エディタ → 右上の **「デプロイ」→「デプロイを管理」** → 対象のデプロイの **「デプロイ ID」**。
-`AKfycb...` で始まる文字列で、ウェブアプリ URL の `/macros/s/` と `/exec` の間にあるものと同じ。
+base64 -i ~/.clasprc.json | tr -d '\n' \
+  | gh secret set CLASPRC_JSON_B64 --repo ＜owner＞/＜repo＞
+gh secret set GAS_SCRIPT_ID --repo ＜owner＞/＜repo＞   # 隠し入力で貼る
 
-コマンドでも確認できる。
+gh secret list --repo ＜owner＞/＜repo＞                # 確認
+```
+
+### 4. ワークフローを回してコードを入れる
+
+**Actions** タブ → 左の **Deploy to Apps Script** → **Run workflow**。
+
+`GAS_DEPLOYMENT_ID` が未設定でも `clasp push` までは実行され、
+「公開版の更新は行いません」という notice を出して正常終了する。
+
+Apps Script エディタを開き、`Code.gs` などが入っていることを確認する。
+
+> ローカルに clasp がある場合は `cd gas && npx @google/clasp@3 push -f` でも同じ。
+
+### 5. `setup()` を実行する
+
+エディタ上部の関数プルダウンで `setup` を選び「実行」。初回は権限の承認を求められる。
+
+実行ログにスプレッドシートの URL とトークンが出る（[SETUP.md](SETUP.md) 参照）。
+
+### 6. 最初のデプロイを作る（ここで初めてデプロイ ID ができる）
+
+**デプロイ → 新しいデプロイ** → 歯車から種類に **ウェブアプリ** を選ぶ。
+
+| 項目 | 設定 |
+|---|---|
+| 説明 | `v1` |
+| 次のユーザーとして実行 | **自分** |
+| アクセスできるユーザー | **自分のみ**（Phase 2 で拡張をつなぐときに「全員」へ変更） |
+
+完了画面に出る **デプロイ ID** と **ウェブアプリ URL** を控える。
+`<ウェブアプリURL>?t=<トークン>` をブックマークする。
+
+以後は「デプロイ → デプロイを管理」からいつでもデプロイ ID を確認できる。
+コマンドなら次のとおり。
 
 ```bash
 cd gas
@@ -94,55 +134,27 @@ npx @google/clasp@3 list-deployments
 
 ```
 2 Deployments.
-- AKfycbxxxx @HEAD          ← これは開発用（/dev）。使わない
+- AKfycbxxxx @HEAD          ← 開発用（/dev）。使わない
 - AKfycbyyyy @1 - v1        ← こちらを登録する
 ```
 
 `@HEAD` は開発用デプロイなので**使わない**。バージョン番号が付いている方を登録する。
 
-### 4. GitHub に Secrets を登録する
+### 7. `GAS_DEPLOYMENT_ID` を追加登録する
 
-登録するのは次の 3 件。
-
-| Name | 値 | 必須 |
-|---|---|---|
-| `CLASPRC_JSON_B64` | `~/.clasprc.json` の base64 | 必須 |
-| `GAS_SCRIPT_ID` | スクリプト ID | 必須 |
-| `GAS_DEPLOYMENT_ID` | デプロイ ID | 任意（未設定ならエディタ上のコードのみ更新し、`/exec` は据え置き） |
-
-#### gh CLI で登録する
-
-トークンが画面にもシェル履歴にも残らない。`gh` が入っていない環境で、
-これだけのために Homebrew を入れる必要はない。その場合は次の「ブラウザで登録する」でよい
-（Homebrew なしで入れたい場合は [cli/cli の Releases](https://github.com/cli/cli/releases) の `.pkg`）。
+手順 3 と同じ場所に 3 件目として登録する。
 
 ```bash
-gh auth login       # 未認証なら
-
-# パイプで直接渡す。値は表示されない
-base64 -i ~/.clasprc.json | tr -d '\n' \
-  | gh secret set CLASPRC_JSON_B64 --repo ＜owner＞/＜repo＞
-
-# 残りは隠し入力のプロンプトで貼り付ける
-gh secret set GAS_SCRIPT_ID --repo ＜owner＞/＜repo＞
 gh secret set GAS_DEPLOYMENT_ID --repo ＜owner＞/＜repo＞
-
-gh secret list --repo ＜owner＞/＜repo＞   # 確認
 ```
 
-#### ブラウザで登録する
+これで完成。以降は `gas/` 配下を変更して `main`（または `claude/english-learning-app-95l8jo`）に
+push するだけで、**URL を変えずに**公開版まで自動更新される。
 
-リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で 3 件登録する。
-`CLASPRC_JSON_B64` は手順 3 でクリップボードに入れた base64 文字列を貼り付ける。
+### 8. 通しで確認する
 
-### 5. 動かして確認する
-
-**Actions** タブ → 左の **Deploy to Apps Script** → **Run workflow** で手動実行できる。
-
-成功したら Apps Script エディタを開いてコードが更新されていること、
-ブックマークした `/exec?t=…` の URL で変更が反映されていることを確認する。
-
-以降は `gas/` 配下を変更して `main`（または `claude/english-learning-app-95l8jo`）に push するだけで自動的に反映される。
+`gas/` の何かを少し変えて push し、Actions が緑になったあと、
+ブックマークした `/exec?t=…` に変更が反映されていることを確認する。
 
 ---
 
@@ -162,6 +174,7 @@ Apps Script プロジェクトと Drive への長期アクセス権を持つ。
 
 | 症状 | 原因と対処 |
 |---|---|
+| デプロイを管理に「このプロジェクトはまだデプロイされていません」と出る | まだ一度もデプロイしていない。手順 6 で最初のデプロイを手で作る。CI は既存デプロイの差し替えしかしないため、最初の 1 回は手動が必須 |
 | `User has not enabled the Apps Script API` | 手順 1 が未実施。有効化してから数分待って再実行 |
 | `invalid_grant` / `Token has been expired or revoked` | リフレッシュトークンが失効した。ローカルで `npx @google/clasp@3 login` をやり直し、`CLASPRC_JSON_B64` を更新する |
 | `Secrets ... を設定してください` で失敗 | `CLASPRC_JSON_B64` か `GAS_SCRIPT_ID` が未登録 |
