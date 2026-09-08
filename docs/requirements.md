@@ -1,18 +1,20 @@
-# 英単語・フレーズ学習アプリ 要件定義（v0.2）
+# 英単語・フレーズ学習アプリ 要件定義（v0.3）
 
-更新日: 2026-09-08 / ステータス: 事前確認待ち（§3）
+更新日: 2026-09-08 / ステータス: Phase 1 着手可
 
 ---
 
-## 0. 確定事項（v0.2 で決定）
+## 0. 確定事項
 
 | 項目 | 決定 |
 |---|---|
 | 復習アルゴリズム | **SM-2**（Anki 互換の4段階評価）。Reviews シートにログを残し、将来 FSRS へ移行可能な形にする |
 | 1日の新規上限 | **20件**（復習は100件）。Settings で変更可 |
-| 拡張の認証 | **共有トークン方式**（ただし §3-1 の確認結果次第で OAuth 方式に切替） |
-| 意味取得 | **APIキー不要版を先に実装**（`LanguageApp.translate()` + Free Dictionary API）。Gemini 版は Enricher の差し替えで後から追加 |
-| 実行アカウント | **Google Workspace (unext-hd.jp)** |
+| 拡張の認証 | **共有トークン方式**（Web App の「全員」公開が可能なことを確認済み） |
+| 意味・使い方の入力 | **手入力が前提**。自動取得は「下書きを埋める任意の補助」として Phase 2 に置く（`LanguageApp.translate()` + Free Dictionary API）。Gemini 版は Phase 3 |
+| 実行アカウント | **Google Workspace (unext-hd.jp)**。Web App の「全員」公開は可能と確認済み |
+| リマインドメール | **スコープ外**（不要との判断） |
+| タグ | 初期セット14個を §4.8 で定義。拡張からの登録時に `source_url` のドメインで自動付与 |
 | UI言語 | 日本語 |
 
 ---
@@ -68,27 +70,24 @@ Web閲覧中・業務中に出会った英語表現を **摩擦ゼロで記録**
 | GAS 実行時間 | 1実行 6分（無料/Workspace 共通）。同時実行 30 |
 | UrlFetch | Workspace **100,000回/日**。本用途では実質無制限 |
 | トリガー総実行時間 | Workspace **6時間/日** |
-| メール送信 | Workspace 1,500通/日 → 毎朝のリマインドは余裕 |
 | `google.script.run` | 1往復 0.5〜2秒。**復習セッション開始時に出題分を一括取得し、回答はバッチ送信**する設計が必須 |
 | 発音 | ブラウザ標準 `speechSynthesis`（APIキー不要・無料）。**iOS Safari はユーザー操作起因でないと再生されない**ため自動再生はせず、必ずボタン起因にする |
 | スプレッドシート | 1000万セル上限。数千件なら余裕 |
 
 ---
 
-## 3. 事前確認事項（実装前のブロッカー）
+## 3. 事前確認事項
 
-Workspace アカウントを使うため、以下は**コードを書く前に確認が必要**。結果によって拡張機能の設計が変わる。
+Workspace アカウントのため組織ポリシーの影響を受ける項目。
 
-| # | 確認事項 | 確認方法 | ブロックされていた場合 |
+| # | 確認事項 | 状態 | 備考 |
 |---|---|---|---|
-| **1** | Apps Script Web App を「**全員**」に公開できるか | GAS のデプロイ画面で「アクセスできるユーザー」に **「全員」** が選択肢として出るか。管理者が無効化できる設定 | 共有トークン方式が成立しない → **§7 の OAuth 方式（案B）に切替**。実装量が増える（GCP で OAuth クライアントID作成、拡張IDの固定） |
-| **2** | Apps Script から外部ドメインへの `UrlFetch` が許可されているか | 管理コンソールの「Apps Script と Sheets の外部接続を許可」設定。GAS で `UrlFetchApp.fetch('https://api.dictionaryapi.dev/...')` を1回実行して確認するのが確実 | Free Dictionary API・Gemini が呼べない → **`LanguageApp.translate()` のみ**で運用（Google 内部サービスのため影響を受けにくい）。発音記号・英英定義は手動入力に |
-| **3** | Chrome 拡張の**デベロッパーモード / 未署名拡張のインストール**が許可されているか | `chrome://extensions` でデベロッパーモードのトグルがグレーアウトしていないか。`chrome://policy` で `ExtensionInstallBlocklist` 等を確認 | 拡張が入らない → WebApp のみで運用、または Chrome Web Store に**限定公開（自分だけ）**で登録して配布 |
-| **4** | 会社アカウントに個人の学習データを置く運用でよいか | 社内規程 | スプレッドシート・GAS プロジェクトは会社資産となり、**退職・異動時にデータを失う**。個人 Gmail に置く選択肢もある（クォータは 1/5 だが本用途では十分） |
+| **1** | Apps Script Web App を「全員」に公開できるか | **✅ 確認済み・可能** | 共有トークン方式（§7.3）で確定 |
+| **2** | Apps Script から外部ドメインへの `UrlFetch` が許可されているか | ⏳ 未確認 | **Phase 2 の「意味を取得」補助ボタンにしか影響しない**。意味・使い方は手入力が前提のため、禁止されていても Phase 1 は成立する。確認は `UrlFetchApp.fetch('https://api.dictionaryapi.dev/api/v2/entries/en/test')` を1回実行するだけ |
+| **3** | Chrome 拡張のデベロッパーモード / 未署名拡張のインストールが許可されているか | ⏳ 未確認 | **Phase 2 のブロッカー**。`chrome://extensions` でデベロッパーモードのトグルが押せるか、`chrome://policy` で `ExtensionInstallBlocklist` 等を確認。禁止なら Chrome Web Store に限定公開（自分のみ）で登録して配布する |
+| **4** | 会社アカウントに個人の学習データを置く運用でよいか | ⚠️ 要判断 | スプレッドシート・GAS プロジェクトは会社資産となり、**退職・異動時にデータを失う**。CSV エクスポート（Phase 4）で退避できるようにしておく |
 
-**1〜3 は 30分程度で確認できる**ので、実装着手前に済ませることを推奨。
-
----
+**Phase 1 に着手するうえでのブロッカーはない。** #2 と #3 は Phase 2 の開始前までに確認すれば足りる。
 
 ## 4. データモデル（スプレッドシート）
 
@@ -128,9 +127,10 @@ Workspace アカウントを使うため、以下は**コードを書く前に�
 
 ### 4.3 `Settings` シート（key-value）
 
-`daily_new_limit`(20) / `daily_review_limit`(100) / `enrich_provider`(`none`|`translate`|`dict`|`translate+dict`|`gemini`) / `default_review_mode` / `tts_lang`(`en-US`|`en-GB`) / `session_size`(20) / `send_daily_reminder`(bool)
+`daily_new_limit`(20) / `daily_review_limit`(100) / `enrich_provider`(`none`|`translate`|`dict`|`translate+dict`|`gemini`) / `default_review_mode` / `tts_lang`(`en-US`|`en-GB`) / `session_size`(20)
 
 **APIキー・共有トークンは Settings シートに置かず、`PropertiesService.getScriptProperties()` に格納**（シートを共有・エクスポートした際の漏洩防止）。
+
 
 ### 4.4 type 自動判定
 
@@ -157,7 +157,47 @@ UI 上で常に手動変更可能。
 
 拡張の `doPost` と WebApp の書き込みが競合しうるため、全書き込み処理を **`LockService.getScriptLock()`（待機30秒）で直列化**する。
 
----
+### 4.8 `Tags` シートと初期タグセット
+
+タグは Settings（key-value）ではなく専用シートで管理する。自動付与ルールを持たせるため。
+
+**列**: `tag` / `label_ja` / `category` / `sort_order` / `auto_domains`（自動付与に使うドメインを空白区切り）/ `active`
+
+タグ設計の失敗要因は「種類が多すぎて付けなくなる」ことなので、**初期は14個・3カテゴリに絞る**。運用しながら追加する前提。
+
+#### 場面（scene）— どこで出会ったか。原則1つ
+
+| tag | label_ja | auto_domains |
+|---|---|---|
+| `meeting` | 会議 | `meet.google.com` `zoom.us` `teams.microsoft.com` |
+| `email` | メール・チャット | `mail.google.com` `chat.google.com` `slack.com` |
+| `doc` | 資料・仕様書・契約 | `docs.google.com` `drive.google.com` `notion.so` `atlassian.net` |
+| `news` | 記事・ニュース・ブログ | `techcrunch.com` `bloomberg.com` `reuters.com` `nytimes.com` `ft.com` `wsj.com` `medium.com` |
+| `talk` | 動画・ポッドキャスト・登壇 | `youtube.com` `podcasts.google.com` |
+
+#### 領域（domain）— トピック。複数可
+
+| tag | label_ja | auto_domains |
+|---|---|---|
+| `ai` | AI・機械学習 | `arxiv.org` `openai.com` `anthropic.com` `huggingface.co` `deepmind.google` |
+| `tech` | 技術・開発 | `github.com` `stackoverflow.com` `developer.mozilla.org` `cloud.google.com` `aws.amazon.com` |
+| `biz` | ビジネス一般 | — |
+| `finance` | 財務・数字 | — |
+| `legal` | 法務・契約 | — |
+
+#### 性質（form）— 言語的な種類。任意
+
+| tag | label_ja | 用途 |
+|---|---|---|
+| `phrasal` | 句動詞 | `look into` `roll out` など。type=`idiom` の補助 |
+| `collocation` | コロケーション | `make a decision` `meet a deadline` など |
+| `formal` | フォーマル | 文書・対外向けで使う表現 |
+| `casual` | 口語・スラング | 会議の雑談で拾った表現 |
+
+#### 自動タグ付け
+拡張から登録する際、`source_url` のホスト名を `auto_domains` と照合して**該当タグを自動付与**する（サブドメインは後方一致）。該当なしなら無タグ。手動で追加・削除できる。
+自社の Workspace ドメイン（`*.unext-hd.jp`）からの登録には `doc` を既定で付ける。
+
 
 ## 5. 復習アルゴリズム（SM-2 / 確定）
 
@@ -266,20 +306,57 @@ const res = await fetch(WEBAPP_URL, {
 
 `manifest.json` の `host_permissions` に **`https://script.google.com/*` と `https://script.googleusercontent.com/*` の両方**を指定（GAS Web App は 302 リダイレクトするため）。
 
-### 7.3 認証（§3-1 の結果で分岐）
+### 7.3 認証（共有トークン方式・確定）
 
-| 案 | 前提 | 内容 | 実装量 |
-|---|---|---|---|
-| **A. 共有トークン**（第一候補・確定済み） | Web App を「全員」で公開できる | リクエストに固定トークンを付け、GAS が Script Properties の値と `Utilities.computeHmacSha256Signature` で照合。トークンは拡張の options に保存 | 小 |
-| **B. OAuth** | 「全員」公開が禁止されている場合 | `chrome.identity.getAuthToken()` で OAuth アクセストークンを取得し、`Authorization: Bearer` で Web App を叩く。Web App の公開範囲は「組織内」でよい。service worker からの fetch なのでプリフライトは発生しない | 中（GCP で OAuth クライアントID作成、`manifest.key` で拡張IDを固定） |
+Web App を「全員（匿名を含む）」で公開するため、**GAS はリクエスト元の Google アカウントを識別できない**（この設定では `Session.getActiveUser().getEmail()` は空文字を返す）。したがって Web App URL そのものが唯一の認証情報になる。
 
-案A の限界: 拡張のソースは読めるため**トークンは完全な秘密にはならない**。個人利用では実用上十分で、漏洩時はトークン再発行で対処する。ただし Web App が匿名公開である以上、**URLとトークンが漏れれば第三者が書き込める**点は受け入れるリスクとして明記する。
+#### 何のためにトークンを分けるのか
 
----
+URL は `AKfycb...` のランダム文字列なので総当たりで当てられる懸念はない。問題は**漏れる経路が多い**こと。
 
-## 8. 意味・使い方の自動取得（Enricher）
+- 拡張機能のソース（`chrome://extensions` から誰でも読める）
+- Git リポジトリへの誤コミット
+- スクリーンショット・画面共有・議事録・ブラウザ履歴・プロキシログ
 
-### 8.1 インタフェース
+URL が漏れると第三者がシートに任意の書き込みができ、`action=recent` で読み出しもできる。トークンを別に持つ実利は次の2点。
+
+1. **失効・ローテーションができる。** URL を変えるには再デプロイが必要で、変えると拡張側の設定もやり直しになる。トークンなら Script Properties の値を書き換えるだけで即座に無効化できる
+2. **URL 単体の露出では突破されない。** Git やスクショに URL だけ映っても、トークンがなければ何もできない
+
+#### 限界（認識したうえで採用する）
+
+URL もトークンも**同じ場所（拡張機能の中）にある**ため、「拡張機能のソースを読まれる」シナリオでは両方漏れる。多層防御としての効果は限定的で、実体は **URL の誤露出に対する保険と失効手段の確保**である。実装が数行で済むため費用対効果は成立するが、これを「堅牢な認証」とは呼ばない。
+
+#### 実装
+
+- `Setup.gs` の初期化時に `Utilities.getUuid()` でトークンを生成し、Script Properties の `WEBAPP_TOKEN` に保存
+- `doPost` / `doGet` の冒頭で受領トークンと照合。**比較は `Utilities.computeHmacSha256Signature` によるタイミング安全な照合**とし、不一致なら 401 相当の JSON を返して即 return
+- トークンは拡張の options 画面で入力し `chrome.storage.local` に保存
+- 漏洩が疑われたら Script Properties の値を再生成 → 拡張の options を更新するだけで復旧
+
+#### 将来の選択肢
+より堅くする必要が生じた場合は `chrome.identity.getAuthToken()` による OAuth（Web App の公開範囲を「組織内」に絞れる）に移行できる。GCP で OAuth クライアントID の作成と `manifest.key` による拡張ID固定が必要になるため、現時点では採用しない。
+
+
+## 8. 意味・使い方の入力（手入力が主 / 自動取得は補助）
+
+### 8.1 方針
+
+**意味・使い方は手入力を前提とする。** 自分で調べて言語化する過程そのものに記憶効果があり、機械翻訳の訳語をそのまま貼るより定着する。自動取得は「空欄を下書きで埋めて入力の手間を減らす任意の補助」として位置づけ、**必須機能にはしない**。
+
+したがって Phase 1 では自動取得を実装せず、手入力フォームのみで完結させる。
+
+### 8.2 手入力を支える UI（Phase 1）
+
+手入力が主になるため、**入力の負担を下げる仕組みと、未入力を放置しない導線**が要件になる。
+
+- 拡張／WebApp からの登録時、**意味が空でも保存できる**（記録の取りこぼしを防ぐことが最優先）
+- ホームに「**未整備 N件**」を常時表示し、タップで未整備キューへ
+- 未整備キューは1件ずつ順に埋める専用UI（次へ／スキップ、`source_context` と `source_url` を並べて表示）
+- 未整備のアイテムは**復習の出題対象に含めない**（意味がないカードは復習できないため）
+- 発音は `speechSynthesis` で再生できるので、`phonetic`（発音記号）は空欄のままでも実害がない
+
+### 8.3 Enricher インタフェース（Phase 2 で実装）
 
 ```js
 /**
@@ -288,32 +365,29 @@ const res = await fetch(WEBAPP_URL, {
  */
 function enrich(input) { /* provider によって実装を切替 */ }
 ```
-Settings の `enrich_provider` で実装を選ぶ。**プロバイダを増やしても呼び出し側は変えない**。
+Settings の `enrich_provider` で実装を選ぶ。**プロバイダを増やしても呼び出し側は変えない**。取得結果は必ずフォームに流し込むだけで、**保存前に編集可能**。自動で確定保存はしない。
 
-### 8.2 Phase 2 実装（APIキー不要版・確定）
+### 8.4 Phase 2 の補助プロバイダ（APIキー不要）
 
 | プロバイダ | 埋まる列 | 備考 |
 |---|---|---|
-| `LanguageApp.translate(text, 'en', 'ja')` | `meaning_ja`, `example_ja` | **GAS 標準サービス。APIキー不要・無料・Google 内部処理**。単なる機械翻訳のため品詞・複数語義・ニュアンスは出ない。フレーズ/センテンスには十分実用的 |
-| Free Dictionary API<br>`GET https://api.dictionaryapi.dev/api/v2/entries/en/{word}` | `phonetic`, `pos`, `meaning_en`, `example` | **キー登録不要**（ただし第三者の外部API）。**単語1語のみ対応**（フレーズ・センテンスでは 404）。コミュニティ運営で可用性保証なし |
+| `LanguageApp.translate(text, 'en', 'ja')` | `meaning_ja`, `example_ja` | **GAS 標準サービス。APIキー不要・無料・Google 内部処理**。機械翻訳なので品詞・複数語義・ニュアンスは出ない |
+| Free Dictionary API<br>`GET https://api.dictionaryapi.dev/api/v2/entries/en/{word}` | `phonetic`, `pos`, `meaning_en`, `example` | **キー登録不要**（ただし第三者の外部API）。**単語1語のみ対応**（フレーズ・センテンスでは 404）。可用性の保証なし |
 
-**既定は `translate+dict`**。type が `word` のときのみ Dictionary API を呼び、`phrase`/`sentence` では translate のみ。
+type が `word` のときのみ Dictionary API を呼び、`phrase` / `sentence` では translate のみ。
+**`usage_note`（使い方・ニュアンス）はどちらでも埋まらない** ため、手入力のままとする。
 
-**埋まらない列**: `usage_note`（使い方・ニュアンス）。これは手動入力か Gemini 版待ち。
+### 8.5 Phase 3（Gemini 版・後付け）
 
-### 8.3 Phase 3 実装（Gemini 版・後付け）
-
-`gemini-2.5-flash` 等に JSON スキーマを固定した構造化出力で問い合わせ、`meaning_ja` / `pos` / `usage_note` / `example` / `example_ja` を**1リクエストで全部埋める**。辞書APIでは埋まらない「使い方・ニュアンス・類義語との違い」がここで初めて埋まる。
+`gemini-2.5-flash` 等に JSON スキーマを固定した構造化出力で問い合わせ、`meaning_ja` / `pos` / `usage_note` / `example` / `example_ja` を1リクエストで埋める。手入力で運用してみて負担が大きいと判断した場合に導入する。
 - APIキーは Script Properties にのみ保持。拡張側には置かない
-- 無料枠は 2025年12月に絞られており日次上限の公開情報が割れている。**個人利用の想定量（1日20〜30件）なら足りる見込みだが、実測が必要**。不足すれば従量課金（Flash 系は極めて安価）
+- 無料枠は 2025年12月に絞られており日次上限の公開情報が割れている。**実測が必要**
 
-### 8.4 共通仕様
+### 8.6 共通仕様
 - 取得結果は Items シートに保存＝キャッシュ。同じ `lemma` の2回目以降は外部呼び出しなし
-- **取得失敗時も登録は必ず成功させる**（空欄で保存 →「未整備キュー」へ）。取得失敗で記録が失われるのが最悪のUX
-- 取得内容は**保存前に必ず編集可能**（自動生成を鵜呑みにしない）
-- 外部API呼び出しは 1回あたり 5秒でタイムアウト、失敗時リトライなし
+- **取得失敗時も登録は必ず成功させる**（空欄で保存 → 未整備キューへ）
+- 外部API呼び出しは 5秒でタイムアウト、リトライなし
 
----
 
 ## 9. データ保護方針（設計上の制約）
 
@@ -374,7 +448,7 @@ GET  {WEBAPP_URL}?token=...&action=recent&limit=5          → { ok, items }
 | **登録 (Add)** | 英語表現を入力 →「意味を取得」→ 自動補完 → 編集して保存。type / タグ / 例文 / 出典を編集可 |
 | **一覧 (Library)** | 全文検索、type・status・タグ絞り込み、並び替え（登録日 / 次回復習日 / 遭遇回数）、インライン編集、論理削除、CSVエクスポート |
 | **復習 (Review)** | 進捗バー、カード、4段階評価ボタン、発音ボタン、その場で編集、終了サマリ（正答率・所要時間・次回予定） |
-| **未整備キュー** | `meaning_ja` が空のアイテムだけを並べ、まとめて埋める |
+| **未整備キュー** | `meaning_ja` が空のアイテムを1件ずつ埋める専用UI。`source_context` / `source_url` を並記。**手入力が前提のため中核画面**。未整備のアイテムは復習に出さない |
 | **ゴミ箱** | 論理削除済みの復元 / 完全削除 |
 | **設定** | 1日の上限、既定の出題モード、Enricher プロバイダ、TTS音声（US/UK）、APIキー登録 |
 
@@ -389,7 +463,7 @@ GAS Web App の URL をホーム画面に追加して使う（GAS は `manifest.
 - **可用性**: 外部API障害時も登録・復習は継続できる
 - **可搬性**: CSV エクスポート。Anki 取り込み用の `text<TAB>meaning` 形式も出力
 - **バックアップ**: 日次トリガーでスプレッドシートを Drive に複製（7世代保持）
-- **監視**: エラーは `console.error` + 週次で自分宛にサマリメール（Phase 4）
+- **監視**: エラーは `console.error` に出力し、実行ログで追跡
 
 ---
 
@@ -419,21 +493,25 @@ GAS 側は **clasp** でローカル管理し、Git で履歴を残す。
 
 ## 14. 開発フェーズ
 
-| Phase | 内容 |
-|---|---|
-| **0** | §3 の事前確認（1〜3）。ここで拡張の認証方式が確定する |
-| **1 (MVP)** | シート初期化 / GAS WebApp（ホーム・登録・一覧・復習[フラッシュカード]）/ SM-2 / 発音 |
-| **2** | Chrome拡張（右クリック・Alt+S・popup）/ Enricher（キー不要版）/ **毎朝のリマインドメール** |
-| **3** | Gemini 版 Enricher / 出題モード追加（4択・タイピング・Cloze・並べ替え・リスニング）/ 統計 |
-| **4** | CSV・Anki エクスポート / バックアップ / 週次サマリ |
+| Phase | 内容 | 前提確認 |
+|---|---|---|
+| **1 (MVP)** | シート初期化（Items / Reviews / Settings / Tags）/ GAS WebApp（ホーム・登録[手入力]・一覧・未整備キュー・復習[フラッシュカード]・設定）/ SM-2 / 発音（`speechSynthesis`）/ タグ | **なし。着手可** |
+| **2** | Chrome拡張（右クリック・`Alt+S`・popup・options・ドメイン自動タグ）/ 共有トークン認証 / Enricher 補助ボタン（`translate` + `dict`） | §3 の #2（外部UrlFetch）と #3（拡張インストール） |
+| **3** | Gemini 版 Enricher / 出題モード追加（4択・タイピング・Cloze・並べ替え・リスニング）/ 統計ダッシュボード | Gemini APIキー |
+| **4** | CSV・Anki エクスポート / 日次バックアップ / ゴミ箱の完全削除 | なし |
 
-**毎朝のリマインドメールを Phase 2 に前倒し**する。継続率に最も効くのは復習の入口を毎日作ることで、実装は時間トリガー＋`MailApp.sendEmail` の数十行で済むため。
-
----
+**リマインドメールはスコープ外**（不要との判断により v0.3 で削除）。
 
 ## 15. 未決事項
 
-1. §3 の事前確認 1〜3 の結果（**Phase 0**）
-2. `usage_note` を Phase 2 の時点でどう埋めるか（手動入力のみ / Gemini を前倒しする / 空のまま運用する）
-3. タグの初期セット（`work` / `meeting` / `email` / `TOEIC` / `IT` など）を決めるか、運用しながら育てるか
-4. 復習のリマインド時刻（毎朝何時か）
+1. §3 の #2（外部 `UrlFetch` の可否）と #3（拡張のインストール可否）— **Phase 2 の開始前まで**に確認
+2. §3 の #4（会社アカウントに個人の学習データを置く運用の可否）
+3. 復習セッションの既定サイズ（20問）を実際に使ってから調整するか
+
+---
+
+## 変更履歴
+
+- **v0.3** (2026-09-08) — Web App の「全員」公開が可能と確認され §3-1 をクリア。意味・使い方は手入力を前提とし、自動取得を任意の補助（Phase 2）へ格下げ。`Tags` シートと初期タグセット14個・ドメイン自動タグ付けを新設。共有トークンの目的と限界を明文化。リマインドメールをスコープから削除
+- **v0.2** (2026-09-08) — SM-2 / 共有トークン / 新規20件を確定。Workspace 前提の事前確認事項とデータ保護方針を新設。MV3 の CORS に関する v0.1 の記述を訂正
+- **v0.1** (2026-09-08) — 初版
