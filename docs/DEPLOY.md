@@ -110,12 +110,13 @@ npx @google/clasp@3 list-deployments
 | `GAS_SCRIPT_ID` | スクリプト ID | 必須 |
 | `GAS_DEPLOYMENT_ID` | デプロイ ID | 任意（未設定ならエディタ上のコードのみ更新し、`/exec` は据え置き） |
 
-#### gh CLI で登録する（推奨）
+#### gh CLI で登録する
 
-トークンが画面にもシェル履歴にも残らない。
+トークンが画面にもシェル履歴にも残らない。`gh` が入っていない環境で、
+これだけのために Homebrew を入れる必要はない。その場合は次の「ブラウザで登録する」でよい
+（Homebrew なしで入れたい場合は [cli/cli の Releases](https://github.com/cli/cli/releases) の `.pkg`）。
 
 ```bash
-brew install gh     # 未導入なら
 gh auth login       # 未認証なら
 
 # パイプで直接渡す。値は表示されない
@@ -132,6 +133,7 @@ gh secret list --repo ＜owner＞/＜repo＞   # 確認
 #### ブラウザで登録する
 
 リポジトリの **Settings → Secrets and variables → Actions → New repository secret** で 3 件登録する。
+`CLASPRC_JSON_B64` は手順 3 でクリップボードに入れた base64 文字列を貼り付ける。
 
 ### 5. 動かして確認する
 
