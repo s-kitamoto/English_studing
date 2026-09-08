@@ -173,6 +173,9 @@ function createGasSandbox(opts) {
   for (const f of FILES) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, 'gas', f), 'utf8'), sandbox, { filename: f });
   }
+  // 復習間隔の ±20% ゆらぎでテストがブレないよう乱数を固定する。
+  // ゆらぎ自体の範囲は tools/test.js が本物の Math.random で検証している。
+  vm.runInContext('Math.random = function () { return 0.5; };', sandbox);
   return { sandbox, state, ss, logs };
 }
 

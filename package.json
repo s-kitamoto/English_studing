@@ -1,6 +1,6 @@
 {
   "name": "english-studying",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "description": "GAS + スプレッドシートの英単語・フレーズ学習アプリ",
   "scripts": {

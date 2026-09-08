@@ -190,13 +190,13 @@ details.more > summary {
 .ansec p { margin: 0; }
 .ansec .en { font-style: italic; }
 
-.grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+.grades { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
 .grades button {
   appearance: none; cursor: pointer; border: 1px solid var(--border);
-  background: var(--surface); border-radius: 12px; padding: 11px 4px 9px;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--surface); border-radius: 12px; padding: 14px 4px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
 }
-.grades button b { font-size: 13.5px; }
+.grades button b { font-size: 16px; letter-spacing: .01em; }
 .grades button small { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .grades button[data-g="0"] b { color: var(--again); }
 .grades button[data-g="1"] b { color: var(--hard); }
@@ -217,12 +217,16 @@ details.more > summary {
 .filters select { width: auto; flex: 1 1 auto; min-width: 110px; padding: 7px 10px; font-size: 13px; }
 .list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
 .li {
-  display: block; width: 100%; text-align: left; appearance: none;
-  background: none; border: 0; border-bottom: 1px solid var(--border);
-  padding: 11px 13px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--border); padding: 7px 10px 7px 13px;
 }
 .li:last-child { border-bottom: 0; }
 .li:hover { background: var(--surface-2); }
+.li-main {
+  flex: 1; min-width: 0; text-align: left; appearance: none;
+  background: none; border: 0; padding: 4px 0; cursor: pointer; color: inherit;
+}
+.li .speak { width: 30px; height: 30px; font-size: 13px; }
 .li .t { font-weight: 600; word-break: break-word; }
 .li .m { color: var(--muted); font-size: 13px; word-break: break-word; }
 .li .meta { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }

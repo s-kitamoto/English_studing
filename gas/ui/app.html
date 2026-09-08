@@ -331,7 +331,7 @@ function flip() {
   $('r-flip').classList.add('hidden');
   $('r-grades').classList.remove('hidden');
   var pv = c.preview || {};
-  [0, 1, 2, 3].forEach(function (g) { $('pv' + g).textContent = fmtInterval(pv[g]); });
+  [0, 2].forEach(function (g) { $('pv' + g).textContent = fmtInterval(pv[g]); });
 }
 
 $('r-flip').addEventListener('click', flip);
@@ -412,9 +412,9 @@ document.addEventListener('keydown', function (e) {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); if (!session.flipped) flip(); return; }
   if (e.key.toLowerCase() === 'p') { var c = currentCard(); if (c) speak(c.text); return; }
-  if (session.flipped && ['1', '2', '3', '4'].indexOf(e.key) !== -1) {
+  if (session.flipped && (e.key === '1' || e.key === '2')) {
     e.preventDefault();
-    grade(Number(e.key) - 1);
+    grade(e.key === '1' ? 0 : 2);   // 1=Again, 2=Perfect
   }
 });
 window.addEventListener('beforeunload', function () { if (session) flushPending(); });
@@ -682,16 +682,22 @@ function renderList() {
     if (it.status && it.status !== 'review') {
       meta += ' <span class="badge">' + esc(META.statusLabels[it.status] || it.status) + '</span>';
     }
-    return '<button class="li" data-id="' + esc(it.id) + '">'
-      + '<div class="t">' + esc(it.text) + '</div>'
-      + (it.meaning_ja ? '<div class="m">' + esc(it.meaning_ja) + '</div>' : '')
-      + '<div class="meta">' + meta + '</div></button>';
+    return '<div class="li">'
+      + '<button class="li-main" data-id="' + esc(it.id) + '">'
+      +   '<div class="t">' + esc(it.text) + '</div>'
+      +   (it.meaning_ja ? '<div class="m">' + esc(it.meaning_ja) + '</div>' : '')
+      +   '<div class="meta">' + meta + '</div>'
+      + '</button>'
+      + '<button class="speak" data-speak="' + esc(it.text) + '" title="発音">🔊</button>'
+      + '</div>';
   }).join('') + (rows.length > shown.length
       ? '<div class="empty">先頭 ' + shown.length + ' 件を表示しています。検索で絞り込んでください。</div>' : '');
 }
 
 $('list').addEventListener('click', function (e) {
-  var b = e.target.closest('.li');
+  var sp = e.target.closest('[data-speak]');
+  if (sp) { e.stopPropagation(); speak(sp.dataset.speak); return; }
+  var b = e.target.closest('.li-main');
   if (b) { unfilledQueue = null; loadIntoForm(b.dataset.id); }
 });
 
@@ -700,6 +706,7 @@ function fillSettings(s) {
   $('st-new').value = s.daily_new_limit;
   $('st-review').value = s.daily_review_limit;
   $('st-session').value = s.session_size;
+  $('st-maxint').value = s.max_interval_days;
   $('st-tts').value = s.tts_lang;
 }
 $('st-voice').addEventListener('change', function () {
@@ -720,6 +727,7 @@ $('st-save').addEventListener('click', function () {
     daily_new_limit: Number($('st-new').value),
     daily_review_limit: Number($('st-review').value),
     session_size: Number($('st-session').value),
+    max_interval_days: Number($('st-maxint').value),
     tts_lang: $('st-tts').value
   };
   $('st-save').disabled = true;

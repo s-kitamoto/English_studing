@@ -1,4 +1,4 @@
-# 英単語・フレーズ学習アプリ 要件定義（v0.4）
+# 英単語・フレーズ学習アプリ 要件定義（v0.5）
 
 更新日: 2026-09-08 / ステータス: **Phase 1 実装済み**（セットアップ手順は [SETUP.md](SETUP.md)）
 
@@ -8,7 +8,7 @@
 
 | 項目 | 決定 |
 |---|---|
-| 復習アルゴリズム | **SM-2**（Anki 互換の4段階評価）。Reviews シートにログを残し、将来 FSRS へ移行可能な形にする |
+| 復習アルゴリズム | **SM-2**（UI は Again / Perfect の 2 ボタン、内部は 4 段階を保持）。Reviews シートにログを残し、将来 FSRS へ移行可能な形にする |
 | 1日の新規上限 | **20件**（復習は100件）。Settings で変更可 |
 | 拡張の認証 | **共有トークン方式**（Web App の「全員」公開が可能なことを確認済み） |
 | 意味・使い方の入力 | **手入力が前提**。自動取得は「下書きを埋める任意の補助」として Phase 2 に置く（`LanguageApp.translate()` + Free Dictionary API）。Gemini 版は Phase 3 |
@@ -126,7 +126,7 @@ Workspace アカウントのため組織ポリシーの影響を受ける項目�
 
 ### 4.3 `Settings` シート（key-value）
 
-`daily_new_limit`(20) / `daily_review_limit`(100) / `enrich_provider`(`none`|`translate`|`dict`|`translate+dict`|`gemini`) / `default_review_mode` / `tts_lang`(`en-US`|`en-GB`) / `session_size`(20)
+`daily_new_limit`(20) / `daily_review_limit`(100) / `max_interval_days`(0=無制限) / `enrich_provider`(`none`|`translate`|`dict`|`translate+dict`|`gemini`) / `default_review_mode` / `tts_lang`(`en-US`|`en-GB`) / `session_size`(20)
 
 **APIキー・共有トークンは Settings シートに置かず、`PropertiesService.getScriptProperties()` に格納**（シートを共有・エクスポートした際の漏洩防止）。
 
@@ -184,55 +184,57 @@ v0.3 まであった `idiom` は **`phrase` に統合**した。慣用句かど�
 
 ## 5. 復習アルゴリズム（SM-2 / 確定）
 
-### 5.1 スケジューリング擬似コード
+### 5.1 評価は 2 ボタン（v0.5 で 4 段階から変更）
 
-```js
-const AGAIN = 0, HARD = 1, GOOD = 2, EASY = 3;
+**復習中に迷わせないことを最優先する。** 4 段階（Again / Hard / Good / Easy）は
+「Hard か Good か」をその場で判断させるぶん 1 枚あたりの所要時間が伸びる。
+判断が雑になればスケジューリング精度も上がらないので、UI は 2 つに絞る。
 
-function schedule(item, grade, today) {
-  let { ease = 2.5, interval = 0, reps = 0, lapses = 0 } = item;
-  let status;
+| ボタン | grade | 挙動 |
+|---|---|---|
+| **Again** | 0 | 当日中に再出題（セッション内キュー）。`ease -= 0.20`、`lapses++`、`interval` リセット |
+| **Perfect** | 2 | `interval *= ease`。`ease` を初期値 2.5 に向けて `+0.05` 戻す |
 
-  if (grade === AGAIN) {
-    reps = 0;
-    lapses += 1;
-    ease = Math.max(1.3, ease - 0.20);
-    interval = 0;                       // 当日中に再出題（セッション内キューで処理）
-    status = 'learning';
-  } else if (reps === 0) {              // 初回、または忘却直後の再学習
-    interval = (grade === EASY) ? 4 : 1;
-    if (grade === HARD) ease = Math.max(1.3, ease - 0.15);
-    if (grade === EASY) ease = ease + 0.15;
-    reps = 1;
-    status = 'review';
-  } else {
-    if (grade === HARD) { ease = Math.max(1.3, ease - 0.15); interval = interval * 1.2; }
-    if (grade === GOOD) { interval = interval * ease; }
-    if (grade === EASY) { ease = ease + 0.15; interval = interval * ease * 1.3; }
-    reps += 1;
-    status = 'review';
-  }
+- 初回: Again→当日 / Perfect→1 日
+- `ease` 下限 1.3 / 上限 2.5、間隔の絶対上限 730 日
+- `interval >= 180日` かつ `lapses == 0` で `status = mastered`
 
-  let due;
-  if (interval > 0) {
-    const fuzz = 1 + (Math.random() * 0.1 - 0.05);          // ±5%（復習の集中を防ぐ）
-    interval = Math.min(Math.max(1, Math.round(interval * fuzz)), 730);
-    due = addDays(today, interval);
-  } else {
-    due = today;
-  }
+`schedule()` は Hard(1) と Easy(3) も受け付けたまま残し、`Reviews` にも `grade` を記録する。
+UI を将来変えても過去ログの意味が変わらないようにするため。
 
-  if (interval >= 180 && lapses === 0) status = 'mastered';
-  return { ease, interval, reps, lapses, due_date: due, status };
-}
-```
+**ease の平均回帰**: 2 ボタンでは `ease` を上げる手段が Perfect しかないため、そのままだと
+一度つまずいたカードが永久に短い間隔に留まる。Perfect のたびに初期値 2.5 を上限として
+`+0.05` 戻すことでこれを避ける（FSRS が difficulty に平均回帰を入れているのと同じ発想）。
+ただし再学習中（`reps === 0`）は回帰させない。
 
-### 5.2 セッション内の再出題
+### 5.2 復習日のゆらぎ
+
+同じ日に復習が集中する「雪崩」を防ぐため間隔にゆらぎを加える。一律のパーセントだと
+長い間隔で数十日単位の誤差になるので、**間隔の長さに応じて段階を変える**（Anki と同等）。
+
+| 間隔 | ゆらぎ |
+|---|---|
+| 1 日 | なし（翌日に必ず出す） |
+| 2〜6 日 | ±25% |
+| 7〜19 日 | ±15% |
+| 20 日以上 | ±5% |
+
+### 5.3 間隔の上限（任意）
+
+`max_interval_days`。既定は **0 = 無制限**。値を入れると Perfect が続いてもその日数以上は
+空かず、**上限の 70〜100% の範囲でばらけて**再出現する。
+
+既定を無制限にしているのは、間隔を伸ばして「よく覚えているものを間引く」ことが
+間隔反復の効率そのものだから。上限を 14 日にすると 500 語で約 36 件/日、
+2,000 語で約 143 件/日の復習が固定で発生する。「覚えた語が数ヶ月出てこないのが不安」
+という場合の逃げ道として設定に残している。
+
+### 5.4 セッション内の再出題
 
 `AGAIN` を押したカードは **クライアント側のキューに戻し、同セッション内で最低3枚後に再出題**する。
 **DB への書き込みはセッション終了時の最終状態で1回だけ**（分単位の再出題をシートに記録しない）。往復回数と行更新を最小化する。
 
-### 5.3 出題対象の抽出と順序
+### 5.5 出題対象の抽出と順序
 
 ```
 1. 期限切れ（due_date < today）      … due_date の古い順
@@ -251,7 +253,7 @@ function schedule(item, grade, today) {
 
 | モード | 内容 | 主な対象 type | Phase |
 |---|---|---|---|
-| **フラッシュカード** | 表(英)→裏(意味・例文・使い方)。自己採点4段階 | すべて | 1 |
+| **フラッシュカード** | 表(英)→裏(意味・例文・使い方)。自己採点は Again / Perfect の 2 ボタン | すべて | 1 |
 | **4択** | 誤答選択肢を**同 `type`・同 `pos` の既存アイテムから自動生成**（不足時は同 `type` からランダム） | word / phrase | 3 |
 | **タイピング** | 日本語→英語を打つ。綴り想起は記憶効果が最も強い | word / phrase | 3 |
 | **穴埋め (Cloze)** | 例文中のターゲットを空欄にして補充 | phrase / sentence | 3 |
@@ -423,7 +425,7 @@ GET  {WEBAPP_URL}?token=...&action=recent&limit=5          → { ok, items }
 ### 方針
 - **モバイルファースト**（スマホの隙間時間での復習が主用途）
 - ダークモード対応、タップ領域を大きく、正誤は色とアニメーションで即時フィードバック
-- PC ではキーボードショートカット（`Space`=めくる、`1`〜`4`=評価、`E`=編集、`P`=発音）
+- PC ではキーボードショートカット（`Space`=めくる、`1`=Again、`2`=Perfect、`P`=発音）
 
 ### 画面
 
@@ -431,8 +433,8 @@ GET  {WEBAPP_URL}?token=...&action=recent&limit=5          → { ok, items }
 |---|---|
 | **ホーム** | 今日の復習件数 / 新規件数 / 連続学習日数(streak) / 直近8週のヒートマップ / 総登録数 / 未整備件数 / 「復習を始める」CTA |
 | **登録 (Add)** | 英語表現を入力 → 意味・使い方を手入力 → 保存。`type` は自動判定し手動上書き可、`pos` は `type` に応じたプルダウン |
-| **一覧 (Library)** | 全文検索、`type`・`pos`・`status` で絞り込み、並び替え（登録日 / 次回復習日 / 遭遇回数）、インライン編集、論理削除、CSVエクスポート |
-| **復習 (Review)** | 進捗バー、カード、4段階評価ボタン、発音ボタン、その場で編集、終了サマリ（正答率・所要時間・次回予定） |
+| **一覧 (Library)** | 全文検索、`type`・`pos`・`status` で絞り込み、並び替え（登録日 / 次回復習日 / 遭遇回数）、**行ごとの発音ボタン**、インライン編集、論理削除、CSVエクスポート |
+| **復習 (Review)** | 進捗バー、カード、Again / Perfect の 2 ボタン、発音ボタン、その場で編集、終了サマリ（正答率・所要時間・次回予定） |
 | **未整備キュー** | `meaning_ja` が空のアイテムを1件ずつ埋める専用UI。`source_context` / `source_url` を並記。**手入力が前提のため中核画面**。未整備のアイテムは復習に出さない |
 | **ゴミ箱** | 論理削除済みの復元 / 完全削除 |
 | **設定** | 1日の上限、既定の出題モード、Enricher プロバイダ、TTS音声（US/UK）、APIキー登録 |
@@ -497,6 +499,7 @@ GAS 側は **clasp** でローカル管理し、Git で履歴を残す。
 
 ## 変更履歴
 
+- **v0.5** (2026-09-08) — 復習の評価を 4 段階から **Again / Perfect の 2 ボタン**に変更（迷わせないことを優先）。2 ボタンで ease が上がらなくなるため Perfect 時の平均回帰（+0.05、上限 2.5）を追加。復習日のゆらぎを一律 ±5% から間隔に応じた段階制（±25/15/5%）へ。任意の間隔上限 `max_interval_days`（既定 0=無制限）を追加。一覧の各行に発音ボタンを追加
 - **v0.4** (2026-09-08) — 分類軸を `type` と `pos` の2つに単純化。独立したタグの概念（`Tags` シート・`tags` 列・ドメイン自動タグ付け）を全廃。`type` から `idiom` を外して `phrase` に統合し3値に。`pos` は単一選択とし `type` によって選択肢を出し分ける
 - **v0.3** (2026-09-08) — Web App の「全員」公開が可能と確認され §3-1 をクリア。意味・使い方は手入力を前提とし、自動取得を任意の補助（Phase 2）へ格下げ。`Tags` シートと初期タグセット14個・ドメイン自動タグ付けを新設。共有トークンの目的と限界を明文化。リマインドメールをスコープから削除
 - **v0.2** (2026-09-08) — SM-2 / 共有トークン / 新規20件を確定。Workspace 前提の事前確認事項とデータ保護方針を新設。MV3 の CORS に関する v0.1 の記述を訂正

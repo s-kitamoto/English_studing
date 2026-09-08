@@ -5,7 +5,7 @@
  */
 
 /** 設定画面に表示するアプリのバージョン。デプロイが反映されたかの目印も兼ねる */
-var APP_VERSION = '0.1.2';
+var APP_VERSION = '0.2.0';
 
 var SHEET = {
   ITEMS: 'Items',
@@ -109,6 +109,10 @@ var DEFAULT_SETTINGS = {
   daily_new_limit: 20,
   daily_review_limit: 100,
   session_size: 20,
+  // 復習間隔の上限（日）。既定は 0 = 無制限（素の SM-2）。
+  // 値を入れると「一度覚えたきり出てこない」がなくなる代わりに、
+  // 語彙が増えるほど 1 日の復習量が線形に増える。
+  max_interval_days: 0,
   tts_lang: 'en-US',
   enrich_provider: 'none'
 };

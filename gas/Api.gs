@@ -180,7 +180,7 @@ function api_getReviewSession(opts) {
     cards: queue.map(function (it) {
       var card = {};
       REVIEW_CARD_FIELDS.forEach(function (f) { card[f] = it[f]; });
-      card.preview = previewIntervals(it, today);
+      card.preview = previewIntervals(it, today, settings.max_interval_days);
       card.isNew = (it.status === STATUS.NEW);
       return card;
     }),
@@ -225,6 +225,7 @@ function api_submitReviews(payload) {
   return withLock_(function () {
     var today = todayStr_();
     var now = nowIso_();
+    var cap = readSettings().max_interval_days;
     var all = readAllItems(true);
     var byId = {};
     all.forEach(function (it) { byId[it.id] = it; });
@@ -239,7 +240,7 @@ function api_submitReviews(payload) {
       if ([GRADE.AGAIN, GRADE.HARD, GRADE.GOOD, GRADE.EASY].indexOf(grade) === -1) return;
 
       var prevInterval = item.interval;
-      var next = schedule(item, grade, today);
+      var next = schedule(item, grade, today, null, cap);
 
       item.ease = next.ease;
       item.interval = next.interval;

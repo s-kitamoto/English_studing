@@ -135,7 +135,10 @@ function buildHtml(prelude) {
   await check('めくると答えが出る', async () => {
     await page.click('#qcard');
     await page.waitForSelector('.answer .meaning');
-    expect(await page.locator('#r-grades').isVisible(), true, '4段階ボタン');
+    expect(await page.locator('#r-grades').isVisible(), true, '評価ボタン');
+    expect(await page.locator('.grades button').count(), 2, 'ボタンは2つだけ');
+    expect((await page.textContent('.grades button[data-g="0"] b')).trim(), 'Again', '左は Again');
+    expect((await page.textContent('.grades button[data-g="2"] b')).trim(), 'Perfect', '右は Perfect');
     const pv = await text('#pv2');
     if (!pv) throw new Error('間隔プレビューが空');
   });
@@ -151,7 +154,7 @@ function buildHtml(prelude) {
   await check('キーボードで操作できる', async () => {
     await page.keyboard.press('Space');
     await page.waitForSelector('.answer .meaning');
-    await page.keyboard.press('3');
+    await page.keyboard.press('2');   // Perfect
     await page.waitForTimeout(120);
     expect(await text('#r-count'), '2 / 5', 'キー操作後の進捗');
   });
@@ -239,9 +242,11 @@ function buildHtml(prelude) {
   });
   await check('未整備バッジが出る', async () =>
     expect(await page.locator('.li .badge.warn', { hasText: '未整備' }).count() >= 1, true, 'バッジ'));
+  await check('各行に発音ボタンがある', async () =>
+    expect(await page.locator('.li [data-speak]').count(), await page.locator('.li').count(), '行数と一致'));
   await shot('06-list');
   await check('行をタップすると編集画面が開く', async () => {
-    await page.click('.li');
+    await page.click('.li-main');
     await page.waitForSelector('#v-add.active');
     expect(await page.locator('#f-delete').isVisible(), true, '削除ボタンが出る');
     expect(await text('#f-save'), '更新', 'ボタンが更新になる');
@@ -373,6 +378,16 @@ function buildHtml(prelude) {
     expect(spoken[spoken.length - 1].voice, 'Samantha', '選択した音声で再生');
     const saved = await vpage.evaluate(() => localStorage.getItem('es.voiceName'));
     expect(saved, 'Samantha', 'localStorage に保存');
+  });
+  await check('一覧の発音ボタンがその行の語を読む', async () => {
+    await vpage.click('.tabs button[data-view="list"]');
+    await vpage.waitForSelector('.li [data-speak]');
+    const row = vpage.locator('.li').first();
+    const term = (await row.locator('.t').textContent()).trim();
+    await row.locator('[data-speak]').click();
+    const spoken = await vpage.evaluate(() => window.__spoken);
+    expect(spoken[spoken.length - 1].text, term, '読み上げ内容');
+    expect(await vpage.locator('#v-list.active').count(), 1, '編集画面に遷移しない');
   });
   await check('カードの読み上げは英語表現そのもの', async () => {
     await vpage.click('.tabs button[data-view="home"]');

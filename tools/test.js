@@ -35,7 +35,8 @@ function group(n) { console.log(`\n[${n}]`); }
 
 const { normalizeLemma, detectType, addDays, diffDays, toDateStr, toIsoStr,
         appendContext, sanitizePos, hasMeaning, schedule, previewIntervals,
-        formatInterval, safeEquals_, GRADE, STATUS } = sandbox;
+        formatInterval, fuzzInterval, safeEquals_, GRADE, STATUS } = sandbox;
+const fuzz1_ = (n) => fuzzInterval(n, () => 0.5);
 
 group('normalizeLemma');
 eq(normalizeLemma('  Make   A Decision.  '), 'make a decision', 'trim/lower/collapse/punct');
@@ -119,6 +120,7 @@ group('schedule: 復習カード');
 const rev = { ease: 2.5, interval: 10, reps: 3, lapses: 0 };
 r = schedule(rev, GRADE.GOOD, T, NF);
 eq([r.interval, r.reps, r.due_date], [25, 4, '2026-10-03'], 'Good -> interval * ease');
+eq(r.ease, 2.5, 'ease 2.5 は据え置き');
 r = schedule(rev, GRADE.HARD, T, NF);
 eq([r.interval, r.ease], [12, 2.35], 'Hard -> interval * 1.2');
 r = schedule(rev, GRADE.EASY, T, NF);
@@ -140,12 +142,70 @@ eq(r.status, 'review', 'lapses>0 なら mastered にしない');
 r = schedule({ ease: 2.5, interval: 0.2, reps: 2, lapses: 0 }, GRADE.GOOD, T, NF);
 ok(r.interval >= 1, '最小 1 日を下回らない');
 
-group('schedule: fuzz の範囲');
-for (let i = 0; i < 200; i++) {
-  const x = schedule({ ease: 2.5, interval: 100, reps: 3, lapses: 0 }, GRADE.GOOD, T, Math.random);
-  if (x.interval < 237 || x.interval > 264) { fail++; console.error(`  FAIL fuzz range: ${x.interval}`); break; }
+group('schedule: 段階的な fuzz');
+function spread(item, grade, n) {
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = schedule(item, grade, T, Math.random);
+    min = Math.min(min, x.interval); max = Math.max(max, x.interval);
+  }
+  return [min, max];
 }
-pass++;
+{
+  // 100 * 2.5 = 250 日 → 20 日以上なので ±5%
+  const [min, max] = spread({ ease: 2.5, interval: 100, reps: 3, lapses: 0 }, GRADE.GOOD, 500);
+  ok(min >= 237 && max <= 263, `長い間隔は ±5% (${min}..${max})`);
+  ok(max - min > 8, `実際にばらついている (${min}..${max})`);
+}
+{
+  // 4 * 2.5 = 10 日 → 7〜20 日なので ±15%
+  const [min, max] = spread({ ease: 2.5, interval: 4, reps: 3, lapses: 0 }, GRADE.GOOD, 500);
+  ok(min >= 8 && max <= 12, `中くらいの間隔は ±15% (${min}..${max})`);
+}
+{
+  // 2 * 2.5 = 5 日 → 7 日未満なので ±25%
+  const [min, max] = spread({ ease: 2.5, interval: 2, reps: 3, lapses: 0 }, GRADE.GOOD, 500);
+  ok(min >= 4 && max <= 7, `短い間隔は ±25% (${min}..${max})`);
+}
+{
+  // 新規カードの 1 日はゆらがない（翌日に必ず出る）
+  const [min, max] = spread({}, GRADE.GOOD, 200);
+  eq([min, max], [1, 1], '1 日はゆらさない');
+}
+eq(formatInterval(fuzz1_(1)), '1日', 'fuzzInterval(1) は 1');
+eq(sandbox.fuzzInterval(0.4, () => 0.9), 1, '1 未満は 1 に切り上げ');
+
+group('schedule: 間隔の上限');
+eq(schedule({ ease: 2.5, interval: 10, reps: 3, lapses: 0 }, GRADE.GOOD, T, NF, 0).interval,
+   25, '上限 0 は無制限');
+eq(schedule({ ease: 2.5, interval: 10, reps: 3, lapses: 0 }, GRADE.GOOD, T, NF).interval,
+   25, '未指定も無制限');
+eq(schedule({ ease: 2.5, interval: 10, reps: 3, lapses: 0 }, GRADE.GOOD, T, NF, 14).interval,
+   12, '上限 14 なら 14*0.85=12 に丸められる');
+eq(schedule({ ease: 2.5, interval: 3, reps: 2, lapses: 0 }, GRADE.GOOD, T, NF, 14).interval,
+   8, '上限より短ければそのまま（3*2.5=7.5→8）');
+{
+  let min = Infinity, max = -Infinity;
+  for (let i = 0; i < 500; i++) {
+    const x = schedule({ ease: 2.5, interval: 300, reps: 9, lapses: 0 }, GRADE.GOOD, T, Math.random, 14);
+    min = Math.min(min, x.interval); max = Math.max(max, x.interval);
+  }
+  ok(max <= 14, `上限を超えない (max=${max})`);
+  ok(min >= 9, `上限の 70% を下回らない (min=${min})`);
+  ok(max - min >= 3, `上限に張り付いても日付が散る (${min}..${max})`);
+}
+eq(schedule({}, GRADE.AGAIN, T, NF, 14).interval, 0, 'Again は上限に関係なく当日');
+eq(schedule({}, GRADE.GOOD, T, NF, 14).interval, 1, '新規カードは上限の影響を受けない');
+
+group('schedule: ease の平均回帰');
+eq(schedule({ ease: 2.0, interval: 5, reps: 2, lapses: 1 }, GRADE.GOOD, T, NF).ease,
+   2.05, 'Good で ease が 0.05 戻る');
+eq(schedule({ ease: 2.5, interval: 5, reps: 2, lapses: 0 }, GRADE.GOOD, T, NF).ease,
+   2.5, '初期値 2.5 を超えて上がらない');
+eq(schedule({ ease: 2.48, interval: 5, reps: 2, lapses: 1 }, GRADE.GOOD, T, NF).ease,
+   2.5, '初期値でクランプ');
+eq(schedule({ ease: 2.0, interval: 5, reps: 0, lapses: 1 }, GRADE.GOOD, T, NF).ease,
+   2.0, '再学習中（reps=0）では回帰しない');
 
 group('schedule: 引数を破壊しない');
 const orig = { ease: 2.5, interval: 10, reps: 3, lapses: 0 };
