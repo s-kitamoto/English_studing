@@ -68,6 +68,56 @@ $('tabs').addEventListener('click', function (e) {
 });
 
 // ---------------------------------------------------------------- 発音 (Web Speech API)
+//
+// 言語一致の先頭を無条件に採ると、macOS の novelty voice（Albert / Bahh /
+// Zarvox など。en-US として登録されている）を掴んでまともに聞こえない。
+// 明示指定 → 既知の良質な音声 → ブラウザ既定、の順で決める。
+var VOICE_PREF_KEY = 'es.voiceName';
+var GOOD_VOICE_HINTS = [
+  'Google US English', 'Google UK English Female', 'Google UK English Male',
+  'Microsoft Ava', 'Microsoft Emma', 'Microsoft Andrew', 'Microsoft Aria', 'Microsoft Guy',
+  'Samantha', 'Ava', 'Allison', 'Susan', 'Alex', 'Evan', 'Nathan', 'Joelle',
+  'Daniel', 'Serena', 'Kate', 'Karen', 'Moira', 'Tessa', 'Rishi'
+];
+var voicesCache = [];
+// プライベートモードなどで localStorage が使えなくても、
+// 少なくともそのセッション中は選択が効くようにメモリにも持つ
+var voicePref = null;
+
+function englishVoices() {
+  try {
+    voicesCache = (window.speechSynthesis.getVoices() || []).filter(function (v) {
+      return v.lang && v.lang.toLowerCase().indexOf('en') === 0;
+    });
+  } catch (e) { voicesCache = []; }
+  return voicesCache;
+}
+
+function savedVoiceName() {
+  if (voicePref !== null) return voicePref;
+  try { return localStorage.getItem(VOICE_PREF_KEY) || ''; } catch (e) { return ''; }
+}
+
+function pickVoice(lang) {
+  var vs = voicesCache.length ? voicesCache : englishVoices();
+  if (!vs.length) return null;
+
+  var saved = savedVoiceName();
+  if (saved) {
+    for (var i = 0; i < vs.length; i++) if (vs[i].name === saved) return vs[i];
+  }
+  var pool = vs.filter(function (v) { return v.lang.replace('_', '-') === lang; });
+  if (!pool.length) pool = vs;
+
+  for (var h = 0; h < GOOD_VOICE_HINTS.length; h++) {
+    for (var j = 0; j < pool.length; j++) {
+      if (pool[j].name.indexOf(GOOD_VOICE_HINTS[h]) === 0) return pool[j];
+    }
+  }
+  for (var k = 0; k < pool.length; k++) if (pool[k].default) return pool[k];
+  return null;   // 該当なしならブラウザ既定に任せる（novelty を掴むよりまし）
+}
+
 function speak(text) {
   if (!('speechSynthesis' in window) || !text) return;
   try {
@@ -76,12 +126,31 @@ function speak(text) {
     var lang = (META && META.settings && META.settings.tts_lang) || 'en-US';
     u.lang = lang;
     u.rate = 0.95;
-    var voices = window.speechSynthesis.getVoices() || [];
-    for (var i = 0; i < voices.length; i++) {
-      if (voices[i].lang && voices[i].lang.replace('_', '-') === lang) { u.voice = voices[i]; break; }
-    }
+    var v = pickVoice(lang);
+    if (v) u.voice = v;
     window.speechSynthesis.speak(u);
   } catch (e) { /* 読み上げ非対応環境は無視 */ }
+}
+
+/**
+ * 設定画面の音声プルダウンを埋める。
+ * 使える音声は端末ごとに違うので、この設定だけはサーバーではなく
+ * localStorage（その端末のブラウザ）に保存する。
+ */
+function fillVoiceSelect() {
+  var sel = $('st-voice');
+  if (!sel) return;
+  var vs = englishVoices();
+  var saved = savedVoiceName();
+  var auto = pickVoice((META && META.settings && META.settings.tts_lang) || 'en-US');
+  var autoLabel = vs.length
+    ? '自動（' + (auto ? auto.name : 'ブラウザ既定') + '）'
+    : '自動（この端末では音声が見つかりません）';
+  sel.innerHTML = '<option value="">' + esc(autoLabel) + '</option>'
+    + vs.map(function (v) {
+        return '<option value="' + esc(v.name) + '">' + esc(v.name + ' — ' + v.lang) + '</option>';
+      }).join('');
+  sel.value = (saved && vs.some(function (v) { return v.name === saved; })) ? saved : '';
 }
 
 // ---------------------------------------------------------------- ホーム
@@ -633,6 +702,19 @@ function fillSettings(s) {
   $('st-session').value = s.session_size;
   $('st-tts').value = s.tts_lang;
 }
+$('st-voice').addEventListener('change', function () {
+  voicePref = this.value;
+  try {
+    if (this.value) localStorage.setItem(VOICE_PREF_KEY, this.value);
+    else localStorage.removeItem(VOICE_PREF_KEY);
+  } catch (e) { /* プライベートモード等では保存できない */ }
+  fillVoiceSelect();
+  speak('This is a ballpark figure.');
+});
+$('st-voice-test').addEventListener('click', function () {
+  speak('This is a ballpark figure.');
+});
+
 $('st-save').addEventListener('click', function () {
   var patch = {
     daily_new_limit: Number($('st-new').value),
@@ -644,6 +726,7 @@ $('st-save').addEventListener('click', function () {
   call('api_saveSettings', patch).then(function (s) {
     META.settings = s;
     fillSettings(s);
+    fillVoiceSelect();
     $('st-save').disabled = false;
     toast('保存しました');
   }).catch(function (e) { $('st-save').disabled = false; fail(e); });
@@ -660,7 +743,15 @@ call('api_getMeta').then(function (m) {
   if (m.spreadsheetUrl) { link.href = m.spreadsheetUrl; }
   else { link.removeAttribute('href'); link.textContent = '（取得できませんでした）'; }
   loadDashboard();
-  if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+  // getVoices() は非同期に埋まるため、確定したら選択肢を作り直す
+  if ('speechSynthesis' in window) {
+    englishVoices();
+    fillVoiceSelect();
+    window.speechSynthesis.onvoiceschanged = function () {
+      englishVoices();
+      fillVoiceSelect();
+    };
+  }
 }).catch(function (e) {
   document.querySelector('.app').innerHTML =
     '<div class="empty">読み込みに失敗しました。<br>' + esc((e && e.message) || e) + '</div>';

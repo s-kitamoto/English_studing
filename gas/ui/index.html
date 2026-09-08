@@ -151,13 +151,22 @@
       <label class="f"><span>1日に出す新規の上限</span><input type="number" id="st-new" min="0" max="200"></label>
       <label class="f"><span>1日に出す復習の上限</span><input type="number" id="st-review" min="1" max="500"></label>
       <label class="f"><span>1セッションの問題数</span><input type="number" id="st-session" min="1" max="200"></label>
-      <label class="f" style="margin-bottom:0">
+      <label class="f">
         <span>読み上げの発音</span>
         <select id="st-tts">
           <option value="en-US">アメリカ英語 (en-US)</option>
           <option value="en-GB">イギリス英語 (en-GB)</option>
         </select>
       </label>
+      <label class="f" style="margin-bottom:6px">
+        <span>音声</span>
+        <select id="st-voice"><option value="">自動</option></select>
+      </label>
+      <div class="row">
+        <button type="button" class="btn sm" id="st-voice-test">🔊 テスト再生</button>
+        <span class="spacer"></span>
+        <span class="tiny muted">この端末だけの設定です</span>
+      </div>
     </div>
     <button class="btn primary block mb" id="st-save">設定を保存</button>
 

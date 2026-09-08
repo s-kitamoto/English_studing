@@ -5,7 +5,7 @@
  */
 
 /** 設定画面に表示するアプリのバージョン。デプロイが反映されたかの目印も兼ねる */
-var APP_VERSION = '0.1.1';
+var APP_VERSION = '0.1.2';
 
 var SHEET = {
   ITEMS: 'Items',

@@ -14,7 +14,7 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'tools', 'screenshots');
 const SHOTS = process.argv.indexOf('--shots') !== -1;
 
-function buildHtml() {
+function buildHtml(prelude) {
   const read = f => fs.readFileSync(path.join(ROOT, 'gas/ui', f), 'utf8');
   let html = read('index.html');
   html = html.replace("<?!= include('ui/style'); ?>", read('style.html'));
@@ -40,7 +40,9 @@ function buildHtml() {
       return api;
     })({}) } };
   </script>`;
-  return html.replace('<script>\n(function () {', shim + '\n<script>\n(function () {');
+  // setContent には addInitScript が効かないので、スタブは HTML に直接差し込む
+  return html.replace('<script>\n(function () {',
+    shim + (prelude || '') + '\n<script>\n(function () {');
 }
 
 (async () => {
@@ -300,6 +302,88 @@ function buildHtml() {
     if (overflow > 0) throw new Error('横スクロールが発生: ' + overflow + 'px');
   });
   await shot('10-desktop');
+
+  // ---- 音声選択（macOS の novelty voice を掴まないこと） ----
+  // 実機の macOS では en-US に Albert / Bahh / Zarvox といったジョーク音声が
+  // 含まれる。言語一致の先頭を採ると Albert を掴んでしまうため、その回帰確認。
+  console.log('\n[音声選択]');
+  const vpage = await browser.newPage({ viewport: { width: 420, height: 860 } });
+  vpage.on('pageerror', e => errors.push('pageerror(voice): ' + e.message));
+  await vpage.exposeFunction('__gasCall', (name, arg) => {
+    try {
+      const value = arg === null ? sandbox[name]() : sandbox[name](arg);
+      return { value: JSON.parse(JSON.stringify(value === undefined ? null : value)) };
+    } catch (e) { return { error: e.message }; }
+  });
+  const VOICE_STUB = `<script>
+  (function () {
+    const V = [
+      { name: 'Albert', lang: 'en-US', default: false, localService: true },
+      { name: 'Bad News', lang: 'en-US', default: false, localService: true },
+      { name: 'Bahh', lang: 'en-US', default: false, localService: true },
+      { name: 'Zarvox', lang: 'en-US', default: false, localService: true },
+      { name: 'Samantha', lang: 'en-US', default: true, localService: true },
+      { name: 'Daniel', lang: 'en-GB', default: false, localService: true },
+      { name: 'Google US English', lang: 'en-US', default: false, localService: false },
+      { name: 'Kyoko', lang: 'ja-JP', default: false, localService: true }
+    ];
+    const spoken = [];
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: {
+        getVoices: function () { return V; },
+        speak: function (u) { spoken.push({ text: u.text, voice: u.voice && u.voice.name, lang: u.lang }); },
+        cancel: function () {},
+        onvoiceschanged: null
+      }
+    });
+    window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+    window.__spoken = spoken;
+  })();
+  </script>`;
+  // localStorage は about:blank では使えないので、実オリジンを装って配信する
+  await vpage.route('https://es.test/', route =>
+    route.fulfill({ contentType: 'text/html; charset=utf-8', body: buildHtml(VOICE_STUB) }));
+  await vpage.goto('https://es.test/', { waitUntil: 'load' });
+  await vpage.waitForFunction(() => document.getElementById('s-total').textContent !== '–', null, { timeout: 8000 });
+
+  const vtext = async sel => (await vpage.textContent(sel) || '').trim();
+  await check('自動選択が novelty voice を避ける', async () => {
+    const label = await vtext('#st-voice option');
+    if (/Albert|Bahh|Zarvox|Bad News/.test(label)) throw new Error('novelty voice を選んでいる: ' + label);
+    if (!/Google US English/.test(label)) throw new Error('良質な音声が選ばれていない: ' + label);
+  });
+  await check('英語以外の音声は選択肢に出さない', async () => {
+    const opts = await vpage.$$eval('#st-voice option', els => els.map(e => e.textContent));
+    if (opts.some(o => /Kyoko/.test(o))) throw new Error('ja-JP が混ざっている');
+    expect(opts.length, 8, '自動 + en 音声 7 件');
+  });
+  await check('実際に読み上げるのも Albert ではない', async () => {
+    await vpage.click('.tabs button[data-view="settings"]');
+    await vpage.click('#st-voice-test');
+    const spoken = await vpage.evaluate(() => window.__spoken);
+    if (!spoken.length) throw new Error('speak が呼ばれていない');
+    if (/Albert|Bahh|Zarvox/.test(spoken[0].voice || '')) throw new Error('novelty voice で再生: ' + spoken[0].voice);
+    expect(spoken[0].voice, 'Google US English', '選ばれた音声');
+  });
+  await check('手動で音声を選ぶと保存されて優先される', async () => {
+    await vpage.selectOption('#st-voice', 'Samantha');
+    await vpage.waitForTimeout(80);
+    const spoken = await vpage.evaluate(() => window.__spoken);
+    expect(spoken[spoken.length - 1].voice, 'Samantha', '選択した音声で再生');
+    const saved = await vpage.evaluate(() => localStorage.getItem('es.voiceName'));
+    expect(saved, 'Samantha', 'localStorage に保存');
+  });
+  await check('カードの読み上げは英語表現そのもの', async () => {
+    await vpage.click('.tabs button[data-view="home"]');
+    await vpage.click('#start-review');
+    await vpage.waitForSelector('#qcard .term');
+    const term = (await vpage.textContent('#qcard .term')).trim();
+    await vpage.click('#sp1');
+    const spoken = await vpage.evaluate(() => window.__spoken);
+    expect(spoken[spoken.length - 1].text, term, '読み上げ内容');
+  });
+  await vpage.close();
 
   await browser.close();
 
