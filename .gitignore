@@ -1,5 +1,4 @@
 node_modules/
-package-lock.json
 
 # clasp のローカル設定（scriptId は環境ごとに異なる）
 gas/.clasp.json

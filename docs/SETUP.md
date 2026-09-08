@@ -24,12 +24,11 @@ WebApp だけで動く状態にするまでの手順。所要 15〜20 分。
 npm install -g @google/clasp
 clasp login
 
-cd gas
-cp .clasp.json.example .clasp.json
-# .clasp.json の scriptId に、プロジェクト設定に表示されている
+cp clasp.json.example gas/.clasp.json
+# gas/.clasp.json の scriptId に、プロジェクト設定に表示されている
 # 「スクリプト ID」を貼り付ける
 
-clasp push
+cd gas && clasp push
 ```
 
 ### 手でコピーする場合
@@ -128,6 +127,11 @@ HTML は「ファイル → 新規 → HTML ファイル」で作り、**名前�
 - **列の順番は変えない**。`Constants.gs` の `ITEM_COLUMNS` が唯一の正で、列を増やすときは末尾に追加する
 - **トークンが漏れたら** `resetToken()` を実行し、ブックマークを更新する
 - 復習ログ（`Reviews`）は消さない。将来 FSRS に移行する際の再計算に使う
+
+## 2回目以降の反映を自動化する
+
+`gas/` を変更するたびに手で push するのが面倒なら、GitHub Actions から自動反映できる。
+設定手順は [DEPLOY.md](DEPLOY.md)。
 
 ## 開発
 

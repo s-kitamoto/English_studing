@@ -1,0 +1,88 @@
+name: Deploy to Apps Script
+
+# gas/ 配下が変わったときに clasp で Apps Script へ反映する。
+# 必要な Secrets は docs/DEPLOY.md を参照。
+on:
+  push:
+    branches:
+      - main
+      - claude/english-learning-app-95l8jo
+    paths:
+      - 'gas/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
+    inputs:
+      redeploy:
+        description: 'ウェブアプリの公開版（/exec）も更新する'
+        type: boolean
+        default: true
+
+concurrency:
+  group: deploy-gas
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 依存をインストール
+        run: npm ci
+
+      - name: テスト（これが落ちたらデプロイしない）
+        run: npm test
+
+      - name: clasp をインストール
+        run: npm install --no-save @google/clasp@3
+
+      # 認証情報とプロジェクト設定はリポジトリに置かず、ここで組み立てる。
+      # base64 で保存しているのは、複数行 JSON がログに部分露出するのを避けるため。
+      - name: 認証情報を展開
+        env:
+          CLASPRC_B64: ${{ secrets.CLASPRC_JSON_B64 }}
+          SCRIPT_ID: ${{ secrets.GAS_SCRIPT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLASPRC_B64}" ] || [ -z "${SCRIPT_ID}" ]; then
+            echo "::error::Secrets CLASPRC_JSON_B64 と GAS_SCRIPT_ID を設定してください（docs/DEPLOY.md 参照）"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${CLASPRC_B64}" | base64 -d > "${RUNNER_TEMP}/clasprc.json"
+          node -e 'JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP+"/clasprc.json","utf8"))' \
+            || { echo "::error::CLASPRC_JSON_B64 が正しい base64/JSON ではありません"; exit 1; }
+          printf '{"scriptId":"%s","rootDir":"."}\n' "${SCRIPT_ID}" > gas/.clasp.json
+
+      - name: ソースを push
+        working-directory: gas
+        env:
+          clasp_config_auth: ${{ runner.temp }}/clasprc.json
+        run: npx clasp push -f
+
+      # push だけでは /exec は古いバージョンのまま。既存デプロイを新バージョンに
+      # 差し替えることで、URL を変えずに公開版を更新する。
+      # GAS_DEPLOYMENT_ID が未設定ならこの手順は飛ばす（エディタ上のコードだけ更新）。
+      - name: ウェブアプリの公開版を更新
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.redeploy }}
+        working-directory: gas
+        env:
+          clasp_config_auth: ${{ runner.temp }}/clasprc.json
+          DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOYMENT_ID}" ]; then
+            echo "::notice::GAS_DEPLOYMENT_ID が未設定のため、公開版の更新は行いません（エディタ上のコードのみ更新）"
+            exit 0
+          fi
+          npx clasp redeploy "${DEPLOYMENT_ID}" -d "${GITHUB_SHA::7} $(date -u +%Y-%m-%dT%H:%MZ)"
+
+      - name: 認証情報を消す
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/clasprc.json" gas/.clasp.json

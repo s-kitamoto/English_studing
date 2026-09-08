@@ -19,7 +19,8 @@ Google Apps Script + スプレッドシートで作る、英単語・フレー�
 ## ドキュメント
 
 - [要件定義 v0.4](docs/requirements.md)
-- [セットアップ手順](docs/SETUP.md)
+- [セットアップ手順](docs/SETUP.md) — 初回のデプロイまで
+- [自動デプロイの設定](docs/DEPLOY.md) — GitHub Actions から Apps Script へ反映する
 
 ## 構成
 
@@ -33,6 +34,8 @@ gas/                  Apps Script（clasp 管理）
   Constants.gs        列定義 / type / pos / 既定設定
   Setup.gs            シート初期化・トークン発行
   ui/                 index.html / style.html / app.html
+.github/workflows/
+  deploy-gas.yml      gas/** の変更を clasp で Apps Script へ反映
 tools/                Node 上の検証ツール
   fake-gas.js         SpreadsheetApp 等を偽装する GAS ランタイム
   test.js             純粋関数の単体テスト
