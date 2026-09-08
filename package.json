@@ -1,0 +1,15 @@
+{
+  "name": "english-studying",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GAS + スプレッドシートの英単語・フレーズ学習アプリ",
+  "scripts": {
+    "test": "node tools/test.js && node tools/integration-test.js",
+    "e2e": "node tools/e2e.js",
+    "e2e:shots": "node tools/e2e.js --shots",
+    "check": "npm test && npm run e2e"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}

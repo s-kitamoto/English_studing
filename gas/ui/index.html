@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <title>English Studying</title>
+  <?!= include('ui/style'); ?>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <h1>English Studying</h1>
+    <span class="streak" id="streak"></span>
+  </header>
+
+  <!-- ============================================================ ホーム -->
+  <section class="view active" id="v-home">
+    <div class="stats">
+      <div class="stat due"><div class="n" id="s-due">–</div><div class="l">復習</div></div>
+      <div class="stat fresh"><div class="n" id="s-new">–</div><div class="l">新規</div></div>
+      <div class="stat todo"><div class="n" id="s-todo">–</div><div class="l">未整備</div></div>
+    </div>
+
+    <button class="btn primary block lg mb" id="start-review">復習を始める</button>
+    <button class="btn block mb hidden" id="go-unfilled">未整備の意味を埋める</button>
+
+    <div class="card">
+      <div class="row mb">
+        <strong class="small">学習の記録</strong>
+        <span class="spacer"></span>
+        <span class="tiny muted" id="heat-caption"></span>
+      </div>
+      <div class="heat" id="heat"></div>
+    </div>
+
+    <div class="card">
+      <div class="row small"><span class="muted">登録総数</span><span class="spacer"></span><b id="s-total">–</b></div>
+      <div class="row small mt"><span class="muted">今日の回答数</span><span class="spacer"></span><b id="s-today">–</b></div>
+      <div class="row small mt"><span class="muted">期限を過ぎている</span><span class="spacer"></span><b id="s-duetotal">–</b></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 復習 -->
+  <section class="view" id="v-review">
+    <div class="rhead">
+      <button class="btn sm ghost" id="quit-review">← 終了</button>
+      <span class="spacer"></span>
+      <span class="tiny muted" id="r-count"></span>
+    </div>
+    <div class="progress"><i id="r-bar" style="width:0%"></i></div>
+
+    <div id="r-stage"></div>
+
+    <div id="r-controls">
+      <button class="btn primary block lg" id="r-flip">答えを見る<span class="tiny muted"> (Space)</span></button>
+      <div class="grades hidden" id="r-grades">
+        <button data-g="0"><b>もう一度</b><small id="pv0"></small></button>
+        <button data-g="1"><b>難しい</b><small id="pv1"></small></button>
+        <button data-g="2"><b>普通</b><small id="pv2"></small></button>
+        <button data-g="3"><b>簡単</b><small id="pv3"></small></button>
+      </div>
+      <div class="row mt tiny muted" id="r-hints">
+        <button class="btn sm ghost" id="r-edit">編集</button>
+        <span class="spacer"></span>
+        <span class="hide-sm">Space めくる / 1–4 評価 / P 発音</span>
+      </div>
+    </div>
+
+    <div id="r-done" class="hidden"></div>
+  </section>
+
+  <!-- ============================================================ 登録 -->
+  <section class="view" id="v-add">
+    <form id="add-form" autocomplete="off">
+      <input type="hidden" id="f-id">
+      <label class="f">
+        <span>英語表現（単語・フレーズ・センテンス）</span>
+        <textarea id="f-text" rows="2" placeholder="例: roll out / make a decision / accommodate"></textarea>
+      </label>
+      <div class="grid2 mb">
+        <label class="f" style="margin:0">
+          <span>種別</span>
+          <select id="f-type"></select>
+        </label>
+        <label class="f" style="margin:0">
+          <span>品詞</span>
+          <select id="f-pos"></select>
+        </label>
+      </div>
+      <label class="f">
+        <span>意味</span>
+        <textarea id="f-meaning_ja" rows="2" placeholder="日本語の意味"></textarea>
+      </label>
+      <label class="f">
+        <span>使い方・ニュアンス</span>
+        <textarea id="f-usage_note" rows="2" placeholder="どんな場面で使うか、似た語との違い、よく一緒に使う語など"></textarea>
+      </label>
+      <label class="f">
+        <span>例文</span>
+        <textarea id="f-example" rows="2"></textarea>
+      </label>
+      <label class="f">
+        <span>例文の訳</span>
+        <textarea id="f-example_ja" rows="2"></textarea>
+      </label>
+
+      <details class="more">
+        <summary>詳細（発音記号・英英定義・出典）</summary>
+        <label class="f mt"><span>発音記号</span><input type="text" id="f-phonetic" placeholder="/əˈkɒmədeɪt/"></label>
+        <label class="f"><span>英英定義</span><textarea id="f-meaning_en" rows="2"></textarea></label>
+        <label class="f"><span>出典URL</span><input type="text" id="f-source_url"></label>
+        <div id="f-context-wrap" class="hidden">
+          <span class="tiny muted" style="font-weight:600">出会った文脈</span>
+          <div class="small muted" id="f-context" style="white-space:pre-wrap"></div>
+        </div>
+      </details>
+
+      <div class="row">
+        <button type="submit" class="btn primary" id="f-save">保存</button>
+        <button type="button" class="btn" id="f-clear">クリア</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn danger sm hidden" id="f-delete">削除</button>
+      </div>
+      <p class="tiny muted mt" id="f-note">意味が空でも保存できます。あとで「未整備」からまとめて埋められます。</p>
+    </form>
+  </section>
+
+  <!-- ============================================================ 一覧 -->
+  <section class="view" id="v-list">
+    <input type="text" id="q" class="mb" placeholder="検索（英語・意味・例文）">
+    <div class="filters">
+      <select id="q-type"><option value="">種別: すべて</option></select>
+      <select id="q-pos"><option value="">品詞: すべて</option></select>
+      <select id="q-status"><option value="">状態: すべて</option></select>
+      <select id="q-sort">
+        <option value="created_desc">新しい順</option>
+        <option value="created_asc">古い順</option>
+        <option value="due_asc">復習が近い順</option>
+        <option value="encounter_desc">遭遇回数順</option>
+        <option value="text_asc">アルファベット順</option>
+      </select>
+    </div>
+    <div class="row tiny muted mb"><span id="list-count"></span></div>
+    <div class="list" id="list"><div class="loading">読み込み中…</div></div>
+  </section>
+
+  <!-- ============================================================ 設定 -->
+  <section class="view" id="v-settings">
+    <div class="card">
+      <label class="f"><span>1日に出す新規の上限</span><input type="number" id="st-new" min="0" max="200"></label>
+      <label class="f"><span>1日に出す復習の上限</span><input type="number" id="st-review" min="1" max="500"></label>
+      <label class="f"><span>1セッションの問題数</span><input type="number" id="st-session" min="1" max="200"></label>
+      <label class="f" style="margin-bottom:0">
+        <span>読み上げの発音</span>
+        <select id="st-tts">
+          <option value="en-US">アメリカ英語 (en-US)</option>
+          <option value="en-GB">イギリス英語 (en-GB)</option>
+        </select>
+      </label>
+    </div>
+    <button class="btn primary block" id="st-save">設定を保存</button>
+    <p class="tiny muted mt center">データはスプレッドシートに保存されます。</p>
+  </section>
+</div>
+
+<nav class="tabs" id="tabs">
+  <button data-view="home"    aria-current="true"><span class="ic">🏠</span>ホーム</button>
+  <button data-view="review"><span class="ic">🔁</span>復習</button>
+  <button data-view="add"><span class="ic">➕</span>登録</button>
+  <button data-view="list"><span class="ic">📚</span>一覧</button>
+  <button data-view="settings"><span class="ic">⚙️</span>設定</button>
+</nav>
+
+<div id="toast"></div>
+
+<?!= include('ui/app'); ?>
+</body>
+</html>

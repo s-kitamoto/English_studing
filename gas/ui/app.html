@@ -1,0 +1,666 @@
+<script>
+(function () {
+'use strict';
+
+// ---------------------------------------------------------------- helpers
+function call(name, arg) {
+  return new Promise(function (resolve, reject) {
+    var runner = google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(function (err) { reject(err); });
+    if (arg === undefined) runner[name](); else runner[name](arg);
+  });
+}
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+var toastTimer = null;
+function toast(msg, isError) {
+  var el = $('toast');
+  el.textContent = msg;
+  el.className = 'show' + (isError ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.className = ''; }, isError ? 4200 : 2200);
+}
+function fail(err) { toast((err && err.message) || String(err) || 'エラーが発生しました', true); }
+function fmtInterval(d) {
+  d = Number(d) || 0;
+  if (d <= 0) return '今日';
+  if (d === 1) return '1日';
+  if (d < 30) return d + '日';
+  if (d < 365) return (Math.round(d / 30 * 10) / 10) + 'ヶ月';
+  return (Math.round(d / 365 * 10) / 10) + '年';
+}
+
+// ---------------------------------------------------------------- state
+var META = null;
+var listCache = { key: null, items: [] };
+var session = null;
+var returnToReview = false;
+var unfilledQueue = null;
+
+// ---------------------------------------------------------------- routing
+var VIEWS = ['home', 'review', 'add', 'list', 'settings'];
+var current = 'home';
+
+function showView(name) {
+  current = name;
+  VIEWS.forEach(function (v) { $('v-' + v).classList.toggle('active', v === name); });
+  Array.prototype.forEach.call($('tabs').children, function (b) {
+    b.setAttribute('aria-current', b.dataset.view === name ? 'true' : 'false');
+  });
+  document.body.classList.toggle('reviewing', name === 'review' && !!session);
+  window.scrollTo(0, 0);
+  if (name === 'home') loadDashboard();
+  if (name === 'list') loadList();
+}
+
+$('tabs').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-view]');
+  if (!b) return;
+  var v = b.dataset.view;
+  if (v === 'review' && !session) { startReview(); return; }
+  if (v === 'add' && current !== 'add') resetForm();
+  showView(v);
+});
+
+// ---------------------------------------------------------------- 発音 (Web Speech API)
+function speak(text) {
+  if (!('speechSynthesis' in window) || !text) return;
+  try {
+    window.speechSynthesis.cancel();
+    var u = new SpeechSynthesisUtterance(text);
+    var lang = (META && META.settings && META.settings.tts_lang) || 'en-US';
+    u.lang = lang;
+    u.rate = 0.95;
+    var voices = window.speechSynthesis.getVoices() || [];
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].lang && voices[i].lang.replace('_', '-') === lang) { u.voice = voices[i]; break; }
+    }
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* 読み上げ非対応環境は無視 */ }
+}
+
+// ---------------------------------------------------------------- ホーム
+function loadDashboard() {
+  call('api_getDashboard').then(function (d) {
+    $('s-due').textContent = d.dueCount;
+    $('s-new').textContent = d.newCount;
+    $('s-todo').textContent = d.unfilledCount;
+    $('s-total').textContent = d.totalCount;
+    $('s-today').textContent = d.reviewedToday;
+    $('s-duetotal').textContent = d.dueTotal;
+    $('streak').textContent = d.streak > 0 ? '🔥 ' + d.streak + '日連続' : '';
+
+    var total = d.dueCount + d.newCount;
+    var btn = $('start-review');
+    btn.textContent = total > 0 ? '復習を始める（' + total + '問）' : '今日の復習は終わりました';
+    btn.disabled = total === 0;
+
+    var uf = $('go-unfilled');
+    uf.classList.toggle('hidden', d.unfilledCount === 0);
+    uf.textContent = '未整備の意味を埋める（' + d.unfilledCount + '件）';
+
+    renderHeat(d.heatmap);
+    if (d.settings) META.settings = d.settings;
+  }).catch(fail);
+}
+
+function renderHeat(cells) {
+  if (!cells || !cells.length) return;
+  var max = cells.reduce(function (m, c) { return Math.max(m, c.count); }, 0);
+  // 各列が日〜土になるよう、先頭の曜日ぶんだけ空マスを詰める
+  var first = cells[0].date.split('-');
+  var weekday = new Date(Date.UTC(+first[0], +first[1] - 1, +first[2])).getUTCDay();
+  var pad = new Array(weekday).fill('<i class="pad"></i>').join('');
+  $('heat').innerHTML = pad + cells.map(function (c) {
+    var l = 0;
+    if (c.count > 0) l = max <= 1 ? 4 : Math.min(4, Math.ceil(c.count / max * 4));
+    return '<i data-l="' + l + '" title="' + c.date + ': ' + c.count + '回"></i>';
+  }).join('');
+  $('heat-caption').textContent = cells[0].date.slice(5) + ' 〜 ' + cells[cells.length - 1].date.slice(5);
+}
+
+$('start-review').addEventListener('click', function () { startReview(); });
+$('go-unfilled').addEventListener('click', function () { startUnfilled(); });
+
+// ---------------------------------------------------------------- 復習
+function startReview() {
+  $('r-done').classList.add('hidden');
+  $('r-controls').classList.remove('hidden');
+  $('r-stage').innerHTML = '<div class="loading">出題を準備しています…</div>';
+  current = 'review';
+  VIEWS.forEach(function (v) { $('v-' + v).classList.toggle('active', v === 'review'); });
+
+  call('api_getReviewSession', {}).then(function (res) {
+    if (!res.cards.length) {
+      session = null;
+      document.body.classList.remove('reviewing');
+      toast('今日出題できるカードはありません');
+      showView('home');
+      return;
+    }
+    session = {
+      queue: res.cards.slice(),
+      total: res.cards.length,
+      done: {},
+      relearn: {},          // Again を押して再出題待ちのカード
+      pending: [],
+      answered: 0,
+      correct: 0,
+      startedAt: Date.now(),
+      cardShownAt: 0,
+      flipped: false
+    };
+    document.body.classList.add('reviewing');
+    renderCard();
+  }).catch(function (e) {
+    document.body.classList.remove('reviewing');
+    fail(e);
+    showView('home');
+  });
+}
+
+function currentCard() { return session && session.queue.length ? session.queue[0] : null; }
+
+function renderCard() {
+  var c = currentCard();
+  if (!c) { finishReview(); return; }
+  session.flipped = false;
+  session.cardShownAt = Date.now();
+
+  // 再出題されるカードはキューに残り続けるため、キュー長からは判別できない。
+  // Again を押したカードを別に数える。
+  var doneCount = Object.keys(session.done).length;
+  var relearnCount = Object.keys(session.relearn).length;
+  $('r-bar').style.width = Math.round(doneCount / session.total * 100) + '%';
+  $('r-count').textContent = doneCount + ' / ' + session.total
+    + (relearnCount ? '（再出題 ' + relearnCount + '）' : '');
+
+  $('r-stage').innerHTML = frontHtml(c);
+  $('r-flip').classList.remove('hidden');
+  $('r-grades').classList.add('hidden');
+  bindStage();
+}
+
+function typeLabel(v) {
+  var t = (META.types || []).filter(function (x) { return x.value === v; })[0];
+  return t ? t.label : v;
+}
+function posLabel(type, v) {
+  var arr = (META.posByType && META.posByType[type]) || [];
+  for (var i = 0; i < arr.length; i++) if (arr[i].value === v) return arr[i].label;
+  return '';
+}
+function badges(c) {
+  var out = '<span class="badge">' + esc(typeLabel(c.type)) + '</span>';
+  var pl = posLabel(c.type, c.pos);
+  if (pl) out += ' <span class="badge">' + esc(pl) + '</span>';
+  if (c.isNew) out += ' <span class="badge accent">新規</span>';
+  if (Number(c.encounter_count) > 1) out += ' <span class="badge warn">' + c.encounter_count + '回遭遇</span>';
+  return out;
+}
+
+function frontHtml(c) {
+  var long = String(c.text).length > 40;
+  return '<div class="qcard" id="qcard">'
+    + '<div class="row" style="justify-content:center;margin-bottom:10px">' + badges(c) + '</div>'
+    + '<div class="term' + (long ? ' long' : '') + '">' + esc(c.text) + '</div>'
+    + '<div class="row" style="justify-content:center;margin-top:12px">'
+    +   '<button class="speak" id="sp1" title="発音">🔊</button>'
+    + '</div>'
+    + '<div class="hint">タップして答えを見る</div>'
+    + '</div>';
+}
+
+function section(title, body, cls) {
+  if (!body) return '';
+  return '<div class="ansec"><h4>' + title + '</h4><p class="' + (cls || '') + '">'
+       + esc(body).replace(/\n/g, '<br>') + '</p></div>';
+}
+
+function backHtml(c) {
+  var h = '<div class="qcard answer" id="qcard">'
+    + '<div class="row" style="margin-bottom:8px">' + badges(c)
+    + '<span class="spacer"></span><button class="speak" id="sp1" title="発音">🔊</button></div>'
+    + '<div class="term">' + esc(c.text) + '</div>';
+  if (c.phonetic) h += '<div class="small muted">' + esc(c.phonetic) + '</div>';
+  h += '<div class="meaning">' + esc(c.meaning_ja || '（意味が未入力）') + '</div>';
+  h += section('使い方・ニュアンス', c.usage_note);
+  if (c.example) {
+    h += '<div class="ansec"><h4>例文</h4><p class="en">' + esc(c.example) + '</p>'
+       + (c.example_ja ? '<p class="muted small">' + esc(c.example_ja) + '</p>' : '') + '</div>';
+  }
+  h += section('英英定義', c.meaning_en, 'small muted');
+  if (c.source_context) {
+    h += '<details class="more" style="margin:12px 0 0"><summary>出会った文脈</summary>'
+       + '<p class="small muted" style="white-space:pre-wrap;margin:4px 0 0">' + esc(c.source_context) + '</p>'
+       + (c.source_url ? '<p class="tiny" style="margin:6px 0 0"><a href="' + esc(c.source_url) + '" target="_blank" rel="noopener">出典を開く</a></p>' : '')
+       + '</details>';
+  }
+  return h + '</div>';
+}
+
+function bindStage() {
+  var q = $('qcard');
+  if (!q) return;
+  var sp = $('sp1');
+  if (sp) sp.addEventListener('click', function (ev) { ev.stopPropagation(); speak(currentCard().text); });
+  if (!session.flipped) q.addEventListener('click', flip);
+}
+
+function flip() {
+  if (!session || session.flipped) return;
+  var c = currentCard();
+  if (!c) return;
+  session.flipped = true;
+  $('r-stage').innerHTML = backHtml(c);
+  bindStage();
+  $('r-flip').classList.add('hidden');
+  $('r-grades').classList.remove('hidden');
+  var pv = c.preview || {};
+  [0, 1, 2, 3].forEach(function (g) { $('pv' + g).textContent = fmtInterval(pv[g]); });
+}
+
+$('r-flip').addEventListener('click', flip);
+$('r-grades').addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-g]');
+  if (b) grade(Number(b.dataset.g));
+});
+$('quit-review').addEventListener('click', function () { finishReview(true); });
+$('r-edit').addEventListener('click', function () {
+  var c = currentCard();
+  if (!c) return;
+  flushPending();
+  returnToReview = true;
+  loadIntoForm(c.id);
+});
+
+function grade(g) {
+  if (!session || !session.flipped) return;
+  var c = session.queue.shift();
+  session.pending.push({
+    item_id: c.id, grade: g, mode: 'flashcard',
+    elapsed_ms: Date.now() - session.cardShownAt
+  });
+  session.answered++;
+  if (g === 0) {
+    // 同セッション内で最低 3 枚あとに再出題する
+    var pos = Math.min(session.queue.length, 3);
+    c.isNew = false;
+    session.relearn[c.id] = true;
+    session.queue.splice(pos, 0, c);
+  } else {
+    delete session.relearn[c.id];
+    session.done[c.id] = true;
+    session.correct++;
+  }
+  if (session.pending.length >= 5) flushPending();
+  renderCard();
+}
+
+function flushPending() {
+  if (!session || !session.pending.length) return;
+  var batch = session.pending.splice(0, session.pending.length);
+  call('api_submitReviews', { results: batch }).catch(function (e) {
+    // 失敗したぶんは戻して次の機会に再送する
+    if (session) session.pending = batch.concat(session.pending);
+    fail(e);
+  });
+}
+
+function finishReview(quitEarly) {
+  if (!session) { showView('home'); return; }
+  flushPending();
+  var s = session;
+  var mins = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  var acc = s.answered ? Math.round(s.correct / s.answered * 100) : 0;
+  session = null;
+  document.body.classList.remove('reviewing');
+
+  $('r-controls').classList.add('hidden');
+  $('r-stage').innerHTML = '';
+  var d = $('r-done');
+  d.classList.remove('hidden');
+  d.innerHTML = '<div class="card center" style="padding:28px 18px">'
+    + '<div style="font-size:34px">' + (quitEarly ? '👋' : '🎉') + '</div>'
+    + '<h2 style="font-size:18px;margin:8px 0 14px">' + (quitEarly ? '中断しました' : 'お疲れさまでした') + '</h2>'
+    + '<div class="row" style="justify-content:center;gap:22px">'
+    +   '<div><div style="font-size:22px;font-weight:700">' + s.answered + '</div><div class="tiny muted">回答</div></div>'
+    +   '<div><div style="font-size:22px;font-weight:700">' + acc + '%</div><div class="tiny muted">正答率</div></div>'
+    +   '<div><div style="font-size:22px;font-weight:700">' + mins + '</div><div class="tiny muted">分</div></div>'
+    + '</div></div>'
+    + '<button class="btn primary block lg" id="done-home">ホームへ</button>';
+  $('done-home').addEventListener('click', function () { showView('home'); });
+}
+
+// キーボード操作
+document.addEventListener('keydown', function (e) {
+  if (current !== 'review' || !session) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); if (!session.flipped) flip(); return; }
+  if (e.key.toLowerCase() === 'p') { var c = currentCard(); if (c) speak(c.text); return; }
+  if (session.flipped && ['1', '2', '3', '4'].indexOf(e.key) !== -1) {
+    e.preventDefault();
+    grade(Number(e.key) - 1);
+  }
+});
+window.addEventListener('beforeunload', function () { if (session) flushPending(); });
+
+// ---------------------------------------------------------------- 登録・編集フォーム
+var FIELDS = ['text', 'type', 'pos', 'meaning_ja', 'meaning_en', 'usage_note',
+              'example', 'example_ja', 'phonetic', 'source_url'];
+
+function fillTypeSelect() {
+  $('f-type').innerHTML = META.types.map(function (t) {
+    return '<option value="' + t.value + '">' + esc(t.label) + '</option>';
+  }).join('');
+  $('q-type').innerHTML = '<option value="">種別: すべて</option>' + META.types.map(function (t) {
+    return '<option value="' + t.value + '">' + esc(t.label) + '</option>';
+  }).join('');
+  var all = [];
+  Object.keys(META.posByType).forEach(function (k) {
+    META.posByType[k].forEach(function (p) {
+      if (!all.some(function (x) { return x.value === p.value; })) all.push(p);
+    });
+  });
+  $('q-pos').innerHTML = '<option value="">品詞: すべて</option>' + all.map(function (p) {
+    return '<option value="' + p.value + '">' + esc(p.label) + '</option>';
+  }).join('');
+  $('q-status').innerHTML = '<option value="">状態: すべて</option>'
+    + Object.keys(META.statusLabels).map(function (k) {
+        return '<option value="' + k + '">' + esc(META.statusLabels[k]) + '</option>';
+      }).join('');
+}
+
+function syncPosOptions(keep) {
+  var type = $('f-type').value;
+  var opts = (META.posByType[type] || []);
+  $('f-pos').innerHTML = '<option value="">—</option>' + opts.map(function (p) {
+    return '<option value="' + p.value + '">' + esc(p.label) + '</option>';
+  }).join('');
+  $('f-pos').disabled = opts.length === 0;
+  if (keep && opts.some(function (p) { return p.value === keep; })) $('f-pos').value = keep;
+}
+
+$('f-type').addEventListener('change', function () { syncPosOptions(); });
+$('f-text').addEventListener('input', function () {
+  if ($('f-id').value) return;                 // 編集中は自動判定しない
+  var t = detectTypeClient($('f-text').value);
+  if ($('f-type').value !== t) { $('f-type').value = t; syncPosOptions(); }
+});
+
+function detectTypeClient(text) {
+  var t = String(text || '').trim();
+  if (!t) return 'word';
+  var words = t.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return 'word';
+  if (/[.!?]$/.test(t) || words.length >= 5) return 'sentence';
+  return 'phrase';
+}
+
+function resetForm() {
+  $('f-id').value = '';
+  FIELDS.forEach(function (f) { if (f !== 'type' && f !== 'pos') $('f-' + f).value = ''; });
+  $('f-type').value = 'word';
+  syncPosOptions();
+  $('f-delete').classList.add('hidden');
+  $('f-context-wrap').classList.add('hidden');
+  $('f-context').textContent = '';
+  $('f-save').textContent = '保存';
+  renderQueueBanner();
+}
+
+function loadIntoForm(id) {
+  call('api_getItem', id).then(function (it) {
+    $('f-id').value = it.id;
+    FIELDS.forEach(function (f) { if (f !== 'type' && f !== 'pos') $('f-' + f).value = it[f] || ''; });
+    $('f-type').value = it.type || 'word';
+    syncPosOptions(it.pos);
+    $('f-delete').classList.remove('hidden');
+    $('f-save').textContent = '更新';
+    if (it.source_context) {
+      $('f-context-wrap').classList.remove('hidden');
+      $('f-context').textContent = it.source_context;
+    } else {
+      $('f-context-wrap').classList.add('hidden');
+    }
+    renderQueueBanner();
+    showView('add');
+  }).catch(fail);
+}
+
+$('add-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var payload = { id: $('f-id').value || undefined };
+  FIELDS.forEach(function (f) { payload[f] = $('f-' + f).value; });
+  if (!String(payload.text).trim()) { toast('英語表現を入力してください', true); return; }
+
+  $('f-save').disabled = true;
+  call('api_upsertItem', payload).then(function (res) {
+    $('f-save').disabled = false;
+    listCache.key = null;
+    if (res.merged) {
+      toast('登録済みでした（' + res.item.encounter_count + '回目の遭遇）');
+    } else {
+      toast(res.created ? '登録しました' : '更新しました');
+    }
+    if (returnToReview && session) {
+      returnToReview = false;
+      // 復習中のカードに反映して戻る
+      session.queue = session.queue.map(function (c) {
+        if (c.id !== res.item.id) return c;
+        var merged = {};
+        Object.keys(c).forEach(function (k) { merged[k] = c[k]; });
+        Object.keys(res.item).forEach(function (k) { merged[k] = res.item[k]; });
+        merged.isNew = c.isNew;
+        merged.preview = c.preview;
+        return merged;
+      });
+      showView('review');
+      document.body.classList.add('reviewing');
+      renderCard();
+      return;
+    }
+    if (unfilledQueue) { nextUnfilled(); return; }
+    resetForm();
+    $('f-text').focus();
+  }).catch(function (e2) { $('f-save').disabled = false; fail(e2); });
+});
+
+$('f-clear').addEventListener('click', function () { resetForm(); $('f-text').focus(); });
+$('f-delete').addEventListener('click', function () {
+  var id = $('f-id').value;
+  if (!id || !confirm('このアイテムを削除します（あとで一覧の「削除済み」から復元できます）。よろしいですか？')) return;
+  call('api_deleteItem', id).then(function () {
+    listCache.key = null;
+    toast('削除しました');
+    if (unfilledQueue) { nextUnfilled(); return; }
+    resetForm();
+    showView('list');
+  }).catch(fail);
+});
+
+// ---------------------------------------------------------------- 未整備キュー
+function startUnfilled() {
+  call('api_getUnfilled', 50).then(function (res) {
+    if (!res.items.length) { toast('未整備のアイテムはありません'); return; }
+    unfilledQueue = res.items;
+    showUnfilledCurrent();
+  }).catch(fail);
+}
+
+function showUnfilledCurrent() {
+  if (!unfilledQueue || !unfilledQueue.length) {
+    unfilledQueue = null;
+    resetForm();
+    toast('未整備の整理が終わりました');
+    showView('home');
+    return;
+  }
+  var it = unfilledQueue[0];
+  $('f-id').value = it.id;
+  FIELDS.forEach(function (f) { if (f !== 'type' && f !== 'pos') $('f-' + f).value = it[f] || ''; });
+  $('f-type').value = it.type || 'word';
+  syncPosOptions(it.pos);
+  $('f-delete').classList.remove('hidden');
+  $('f-save').textContent = '保存して次へ';
+  if (it.source_context) {
+    $('f-context-wrap').classList.remove('hidden');
+    $('f-context').textContent = it.source_context;
+  } else {
+    $('f-context-wrap').classList.add('hidden');
+  }
+  renderQueueBanner();
+  showView('add');
+  $('f-meaning_ja').focus();
+}
+
+function nextUnfilled() {
+  if (!unfilledQueue) return;
+  unfilledQueue.shift();
+  showUnfilledCurrent();
+}
+
+function renderQueueBanner() {
+  var el = $('uf-banner');
+  if (!unfilledQueue || !unfilledQueue.length) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'uf-banner';
+    el.className = 'card';
+    $('v-add').insertBefore(el, $('add-form'));
+  }
+  el.innerHTML = '<div class="row small"><b>未整備の整理</b>'
+    + '<span class="spacer"></span><span class="muted">残り ' + unfilledQueue.length + ' 件</span>'
+    + '<button class="btn sm" id="uf-skip">スキップ</button>'
+    + '<button class="btn sm ghost" id="uf-stop">やめる</button></div>';
+  $('uf-skip').addEventListener('click', nextUnfilled);
+  $('uf-stop').addEventListener('click', function () {
+    unfilledQueue = null;
+    resetForm();
+    showView('home');
+  });
+}
+
+// ---------------------------------------------------------------- 一覧
+var listTimer = null;
+['q-type', 'q-pos', 'q-status', 'q-sort'].forEach(function (id) {
+  $(id).addEventListener('change', function () {
+    if (id === 'q-status') loadList(); else renderList();
+  });
+});
+$('q').addEventListener('input', function () {
+  clearTimeout(listTimer);
+  listTimer = setTimeout(renderList, 180);
+});
+
+function loadList() {
+  var status = $('q-status').value;
+  var key = (status === 'deleted') ? 'deleted' : 'active';
+  if (listCache.key === key) { renderList(); return; }
+  $('list').innerHTML = '<div class="loading">読み込み中…</div>';
+  call('api_listItems', { limit: 3000, status: status === 'deleted' ? 'deleted' : '' })
+    .then(function (res) {
+      listCache = { key: key, items: res.items };
+      renderList();
+    }).catch(fail);
+}
+
+function renderList() {
+  var q = $('q').value.trim().toLowerCase();
+  var type = $('q-type').value, pos = $('q-pos').value, status = $('q-status').value;
+  var sort = $('q-sort').value;
+
+  var rows = listCache.items.filter(function (it) {
+    if (type && it.type !== type) return false;
+    if (pos && it.pos !== pos) return false;
+    if (status && status !== 'deleted' && it.status !== status) return false;
+    if (q) {
+      var hay = (it.text + ' ' + (it.meaning_ja || '')).toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
+
+  rows.sort(function (a, b) {
+    switch (sort) {
+      case 'created_asc': return (a.created_at || '') < (b.created_at || '') ? -1 : 1;
+      case 'due_asc': return (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1;
+      case 'encounter_desc': return (b.encounter_count || 0) - (a.encounter_count || 0);
+      case 'text_asc': return a.text.toLowerCase() < b.text.toLowerCase() ? -1 : 1;
+      default: return (a.created_at || '') > (b.created_at || '') ? -1 : 1;
+    }
+  });
+
+  $('list-count').textContent = rows.length + ' 件' +
+    (rows.length !== listCache.items.length ? '（全 ' + listCache.items.length + ' 件中）' : '');
+
+  if (!rows.length) {
+    $('list').innerHTML = '<div class="empty">該当するものがありません。</div>';
+    return;
+  }
+  var shown = rows.slice(0, 300);
+  $('list').innerHTML = shown.map(function (it) {
+    var meta = '<span class="badge">' + esc(typeLabel(it.type)) + '</span>';
+    var pl = posLabel(it.type, it.pos);
+    if (pl) meta += ' <span class="badge">' + esc(pl) + '</span>';
+    if (!it.filled) meta += ' <span class="badge warn">未整備</span>';
+    if (it.overdue) meta += ' <span class="badge accent">期限切れ</span>';
+    if (it.status && it.status !== 'review') {
+      meta += ' <span class="badge">' + esc(META.statusLabels[it.status] || it.status) + '</span>';
+    }
+    return '<button class="li" data-id="' + esc(it.id) + '">'
+      + '<div class="t">' + esc(it.text) + '</div>'
+      + (it.meaning_ja ? '<div class="m">' + esc(it.meaning_ja) + '</div>' : '')
+      + '<div class="meta">' + meta + '</div></button>';
+  }).join('') + (rows.length > shown.length
+      ? '<div class="empty">先頭 ' + shown.length + ' 件を表示しています。検索で絞り込んでください。</div>' : '');
+}
+
+$('list').addEventListener('click', function (e) {
+  var b = e.target.closest('.li');
+  if (b) { unfilledQueue = null; loadIntoForm(b.dataset.id); }
+});
+
+// ---------------------------------------------------------------- 設定
+function fillSettings(s) {
+  $('st-new').value = s.daily_new_limit;
+  $('st-review').value = s.daily_review_limit;
+  $('st-session').value = s.session_size;
+  $('st-tts').value = s.tts_lang;
+}
+$('st-save').addEventListener('click', function () {
+  var patch = {
+    daily_new_limit: Number($('st-new').value),
+    daily_review_limit: Number($('st-review').value),
+    session_size: Number($('st-session').value),
+    tts_lang: $('st-tts').value
+  };
+  $('st-save').disabled = true;
+  call('api_saveSettings', patch).then(function (s) {
+    META.settings = s;
+    fillSettings(s);
+    $('st-save').disabled = false;
+    toast('保存しました');
+  }).catch(function (e) { $('st-save').disabled = false; fail(e); });
+});
+
+// ---------------------------------------------------------------- 起動
+call('api_getMeta').then(function (m) {
+  META = m;
+  fillTypeSelect();
+  syncPosOptions();
+  fillSettings(m.settings);
+  loadDashboard();
+  if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+}).catch(function (e) {
+  document.querySelector('.app').innerHTML =
+    '<div class="empty">読み込みに失敗しました。<br>' + esc((e && e.message) || e) + '</div>';
+});
+
+})();
+</script>
